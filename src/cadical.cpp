@@ -734,7 +734,14 @@ int App::main (int argc, char **argv) {
   }
   solver->options ();
 
+  //for debug
+  for (auto it : solver->internal->clauses)
+  {
+    it->pri_clause();
+  }
+
   int res = 0;
+  return res;
 
   if (incremental) {
     bool reporting = get ("report") > 1 || get ("verbose") > 0;

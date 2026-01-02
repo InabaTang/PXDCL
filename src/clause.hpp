@@ -5,6 +5,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
+#include <iostream>
 
 namespace CaDiCaL {
 
@@ -118,11 +119,18 @@ struct Clause {
   // virtual sizes and the compiler can somehow figure that out, because
   // that would in turn produce a warning.
 
+
+  //for xor cluase
+  bool xor_flag; // if xor cluase , 1.
+
 #ifndef NFLEXIBLE
   int literals[];
 #else
   int literals[2];
 #endif
+
+
+
 
   // Supports simple range based for loops over clauses.
 
@@ -162,6 +170,16 @@ struct Clause {
   // code though for both situations and thus hide here this variance.
   //
   bool collect () const { return !reason && garbage; }
+
+  void pri_clause() 
+  {
+    std::cout << "Clause literals: ";
+    if (xor_flag) cout << "x ";
+    for (int i = 0; i < size; ++i) {
+        std::cout << literals[i] << " ";
+    }
+    std::cout << std::endl;
+  }
 };
 
 struct clause_smaller_size {

@@ -182,6 +182,7 @@ void Internal::init_vars (int new_max_var) {
 }
 
 void Internal::add_original_lit (int lit) {
+  // if (xor_clause_flag) printf("insert add_original_lit : %d\n",lit);
   assert (abs (lit) <= max_var);
   if (lit) {
     original.push_back (lit);
@@ -1017,7 +1018,7 @@ int Internal::already_solved () {
   } else {
     if (level && !opts.ilb)
       backtrack ();
-    if (!level && !propagate ()) {
+    if (!level && !propagate ()) { //Find : propagate
       LOG ("root level propagation produces conflict");
       learn_empty_clause ();
       res = 20;

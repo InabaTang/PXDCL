@@ -271,6 +271,11 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) { //Find :
     }
 
     //xor add
+    if (ch == 'x')
+    {
+      solver->internal->xor_clause_flag = true;
+      continue;
+    }
 
     if (ch == 'a' && found_inccnf_header)
       break;

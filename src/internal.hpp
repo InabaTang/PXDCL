@@ -326,6 +326,9 @@ struct Internal {
   const Range vars; // Provides safe variable iteration.
   const Sange lits; // Provides safe literal iteration.
 
+  //for xor clause
+  int xor_clause_flag;
+
   /*----------------------------------------------------------------------*/
 
   Internal ();
@@ -1800,6 +1803,8 @@ struct Internal {
   // Warning messages.
   //
   void warning (const char *, ...) CADICAL_ATTRIBUTE_FORMAT (2, 3);
+
+  //for xor clause
 };
 
 // Fatal internal error which leads to abort.

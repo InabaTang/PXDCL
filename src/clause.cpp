@@ -108,13 +108,18 @@ Clause *Internal::new_clause (bool red, int glue) {
   c->vivified = false;
   c->vivify = false;
   c->used = 0;
+  if (xor_clause_flag) c->xor_flag = true;
+  else c->xor_flag = false;
 
   c->glue = glue;
   c->size = size;
   c->pos = 2;
 
   for (int i = 0; i < size; i++)
+  {
+    //if (c->xor_flag) printf("%d : %d \n",i,clause[i]);
     c->literals[i] = clause[i];
+  }
 
   // Just checking that we did not mess up our sophisticated memory layout.
   // This might be compiler dependent though. Crucial for correctness.
@@ -378,7 +383,7 @@ void Internal::assign_original_unit (int64_t id, int lit) {
 // made sure that newest_clause points to the new clause upon return.
 
 void Internal::add_new_original_clause (int64_t id) {
-
+  //if (xor_clause_flag) printf("add new original clause : %ld\n",id);
   if (!from_propagator && level && !opts.ilb) {
     backtrack ();
   } else if (changed_val) {
@@ -399,43 +404,62 @@ void Internal::add_new_original_clause (int64_t id) {
     skip = true;
   } else {
     assert (clause.empty ());
-    for (const auto &lit : original) {
-      int tmp = marked (lit);
-      if (tmp > 0) {
-        LOG ("removing duplicated literal %d", lit);
-      } else if (tmp < 0) {
-        LOG ("tautological since both %d and %d occur", -lit, lit);
-        skip = true;
-      } else {
-        mark (lit);
-        tmp = fixed (lit);
-        if (tmp < 0) {
-          LOG ("removing falsified literal %d", lit);
-          if (lrat) {
-            int elit = externalize (lit);
-            unsigned eidx = (elit > 0) + 2u * (unsigned) abs (elit);
-            if (!external->ext_units[eidx]) {
-              int64_t uid = unit_id (-lit);
-              lrat_chain.push_back (uid);
-            }
-          }
-        } else if (tmp > 0) {
-          LOG ("satisfied since literal %d true", lit);
+    if (!xor_clause_flag)
+    {
+      for (const auto &lit : original) {
+        int tmp = marked (lit);
+        if (tmp > 0) {
+          LOG ("removing duplicated literal %d", lit);
+        } else if (tmp < 0) {
+          LOG ("tautological since both %d and %d occur", -lit, lit);
           skip = true;
         } else {
-          clause.push_back (lit);
-          assert (flags (lit).status != Flags::UNUSED);
-          tmp = val (lit);
-          if (tmp)
-            learned_levels.insert (var (lit).level);
-          else
-            unassigned++;
+          mark (lit);
+          tmp = fixed (lit);
+          if (tmp < 0) {
+            LOG ("removing falsified literal %d", lit);
+            if (lrat) {
+              int elit = externalize (lit);
+              unsigned eidx = (elit > 0) + 2u * (unsigned) abs (elit);
+              if (!external->ext_units[eidx]) {
+                int64_t uid = unit_id (-lit);
+                lrat_chain.push_back (uid);
+              }
+            }
+          } else if (tmp > 0) {
+            LOG ("satisfied since literal %d true", lit);
+            skip = true;
+          } else {
+            clause.push_back (lit);
+            assert (flags (lit).status != Flags::UNUSED);
+            tmp = val (lit);
+            if (tmp)
+              learned_levels.insert (var (lit).level);
+            else
+              unassigned++;
+          }
         }
       }
+      for (const auto &lit : original)
+        unmark (lit);
     }
-    for (const auto &lit : original)
-      unmark (lit);
+    else
+    {
+      for (const auto &lit : original)
+      {
+        clause.push_back (lit);
+      }
+    }
   }
+
+  // if (xor_clause_flag)
+  // {
+  //   for (auto it : clause)
+  //   {
+  //     printf("%d ",it);
+  //   }
+  //   printf("\n");
+  // }
   if (skip) {
     if (from_propagator) {
       stats.ext_prop.elearn_conf++;
@@ -471,8 +495,10 @@ void Internal::add_new_original_clause (int64_t id) {
           mark_garbage_external_forgettable (id);
       }
     }
+
     external->eclause.clear ();
     lrat_chain.clear ();
+
     if (!size) {
       if (from_propagator)
         stats.ext_prop.elearn_conf++;
@@ -515,11 +541,20 @@ void Internal::add_new_original_clause (int64_t id) {
       check_watched_literal_invariants ();
 #endif
       int glue = (int) (learned_levels.size () + unassigned);
+      //if (xor_clause_flag) printf("??? glue : %d\n",glue);
       assert (glue <= (int) clause.size ());
       bool clause_redundancy = from_propagator && ext_clause_forgettable;
       Clause *c = new_clause (clause_redundancy, glue);
+      if (xor_clause_flag) printf("add new learned clause : %ld\n",new_id);
       c->id = new_id;
+      if (xor_clause_flag)
+      {
+        c->xor_flag = true;
+        xor_clause_flag = false;
+      }
       clause_id--;
+
+      //if (xor_clause_flag) printf("!!!\n");
       watch_clause (c);
       clause.clear ();
       original.clear ();
