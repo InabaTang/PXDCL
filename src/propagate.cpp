@@ -251,6 +251,25 @@ inline void Internal::search_assign (int lit, Clause *reason) {
   if (!searching_lucky_phases)
     phases.saved[idx] = tmp; // phase saving during search
   trail.push_back (lit);
+  // SEGA: increment counters + track XOR parity for long XOR clauses
+  {
+    int v = abs(lit);
+    if (v < (int)var_to_long_xor.size()) {
+      bool assigned_is_pos = (lit > 0);
+      for (int packed : var_to_long_xor[v]) {
+        int ci = packed >> 1;
+        if (long_xor_clauses[ci] == nullptr) continue;  // clause deleted by GC
+        bool clause_is_pos = packed & 1;
+        // Parity flips iff the literal in the XOR clause evaluates to True.
+        // Since the assigned literal is always True (val(lit) > 0),
+        // the clause literal is True when both have the same sign.
+        if (assigned_is_pos == clause_is_pos)
+          xor_clause_parity[ci] = !xor_clause_parity[ci];
+        if (++xor_clause_counter[ci] == xor_clause_size[ci])
+          xor_full_clause.push_back(ci);
+      }
+    }
+  }
 #ifdef LOGGING
   if (!lit_level)
     LOG ("root-level unit assign %d @ 0", lit);
@@ -711,6 +730,13 @@ bool Internal::propagate () {
 
       ws.resize (j - ws.begin ());
     }
+  }
+
+  // SEGA: check long XOR clauses for conflicts right after propagation,
+  // before any restart/rephase/reduce decisions in the main CDCL loop.
+  // This detects XOR violations at the earliest possible moment.
+  if (!conflict && !searching_lucky_phases && segaing()) {
+    sega();
   }
 
   if (searching_lucky_phases) {

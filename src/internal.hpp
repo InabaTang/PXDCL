@@ -343,10 +343,23 @@ struct Internal {
   bool decide_flag_debug;
   Clause *xor_decide_clause;
 
+  bool segaing();
+  void sega();
+
 
   // for xor gauss
   int xor_clause_number; // not include gauss clause
   vector<Clause *> xor_clauses;
+
+  // for SEGA: lazy evaluation of long XOR clauses (size > 5)
+  // Each clause has a counter incremented when its literals are assigned.
+  vector<Clause *> long_xor_clauses;        // XOR clauses with size > 5
+  vector<int> xor_clause_counter;           // assigned-literal count per clause
+  vector<int> xor_clause_size;              // size of each long XOR clause
+  vector<char> xor_clause_parity;           // tracked parity (updated incrementally)
+  // variable → packed entries: (clause_index << 1) | is_positive_literal_in_clause
+  vector<vector<int>> var_to_long_xor;
+  vector<int> xor_full_clause;              // fully-assigned clause indices
   int **gauss_dp;
   int **gauss_pre;
   vector<XorLine> xor_lines;
@@ -711,10 +724,14 @@ struct Internal {
   //
   inline void watch_clause (Clause *c) {
     if (c->xor_flag) {
-      const int l0 = c->literals[0];
-      const int l1 = c->literals[1];
-      watch_xor_literal (l0, l1, c);
-      watch_xor_literal (l1, l0, c);
+      // Only watch short XOR clauses (size <= 5).
+      // Long XOR clauses (size > 5) are handled by SEGA lazy evaluation.
+      if (c->size <= 5) {
+        const int l0 = c->literals[0];
+        const int l1 = c->literals[1];
+        watch_xor_literal (l0, l1, c);
+        watch_xor_literal (l1, l0, c);
+      }
     } else {
       const int l0 = c->literals[0];
       const int l1 = c->literals[1];
@@ -732,8 +749,11 @@ struct Internal {
     const int l1 = c->literals[1];
     remove_watch (watches (l0), c);
     remove_watch (watches (l1), c);
-    remove_watch (xor_watches (l0), c);
-    remove_watch (xor_watches (l1), c);
+    // Only short XOR clauses (size <= 5) were watched
+    if (c->xor_flag && c->size <= 5) {
+      remove_watch (xor_watches (l0), c);
+      remove_watch (xor_watches (l1), c);
+    }
   }
 
   // Update queue to point to last potentially still unassigned variable.

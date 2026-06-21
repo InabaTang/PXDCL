@@ -141,7 +141,26 @@ Clause *Internal::new_clause (bool red, int glue) {
   }
 
   clauses.push_back (c);
-  if (xor_clause_flag) xor_clauses.push_back(c);
+  if (xor_clause_flag) {
+    xor_clauses.push_back(c);
+    // Register long XOR clauses for SEGA lazy evaluation
+    if (c->size > 5) {
+      int idx = (int)long_xor_clauses.size();
+      long_xor_clauses.push_back(c);
+      xor_clause_counter.push_back(0);
+      xor_clause_size.push_back(c->size);
+      xor_clause_parity.push_back(0);
+      // Ensure var_to_long_xor is large enough
+      for (int i = 0; i < c->size; i++) {
+        int lit = c->literals[i];
+        int v = abs(lit);
+        int packed = (idx << 1) | (int)(lit > 0);  // encode ci + sign in one int
+        while ((int)var_to_long_xor.size() <= v)
+          var_to_long_xor.push_back({});
+        var_to_long_xor[v].push_back(packed);
+      }
+    }
+  }
   clause_delete.release ();
   LOG (c, "new pointer %p", (void *) c);
 
@@ -262,6 +281,16 @@ void Internal::deallocate_clause (Clause *c) {
 
 void Internal::delete_clause (Clause *c) {
   LOG (c, "delete pointer %p", (void *) c);
+
+  // SEGA: null out any reference to this clause in long_xor_clauses
+  // before deallocation prevents dangling pointers in hot paths.
+  if (c->xor_flag && c->size > 5) {
+    for (size_t ci = 0; ci < long_xor_clauses.size (); ci++) {
+      if (long_xor_clauses[ci] == c)
+        long_xor_clauses[ci] = nullptr;
+    }
+  }
+
   size_t bytes = c->bytes ();
   stats.collected += bytes;
   if (c->garbage) {
@@ -387,6 +416,11 @@ void Internal::assign_original_unit (int64_t id, int lit) { //Find : ori_unit
 // made sure that newest_clause points to the new clause upon return.
 
 void Internal::add_new_original_clause (int64_t id) {
+  // Save and immediately reset xor_clause_flag to prevent state leaks
+  // in early-return / skip paths (e.g., tautology, unsatisfiable).
+  bool is_xor = xor_clause_flag;
+  xor_clause_flag = false;
+
   //if (xor_clause_flag) printf("add new original clause : %ld\n",id);
   if (!from_propagator && level && !opts.ilb) {
     backtrack ();
@@ -408,7 +442,7 @@ void Internal::add_new_original_clause (int64_t id) {
     skip = true;
   } else {
     assert (clause.empty ());
-    if (!xor_clause_flag)
+    if (!is_xor)
     {
       for (const auto &lit : original) {
         int tmp = marked (lit);
@@ -561,20 +595,18 @@ void Internal::add_new_original_clause (int64_t id) {
     } else {
       move_literals_to_watch ();
 #ifndef NDEBUG
-      if (!xor_clause_flag) check_watched_literal_invariants ();
+      if (!is_xor) check_watched_literal_invariants ();
 #endif
       //Find : Add clause lit
       int glue = (int) (learned_levels.size () + unassigned);
       //if (xor_clause_flag) printf("??? glue : %d\n",glue);
       assert (glue <= (int) clause.size ());
       bool clause_redundancy = from_propagator && ext_clause_forgettable;
+      if (is_xor) xor_clause_flag = true;  // set for new_clause()
       Clause *c = new_clause (clause_redundancy, glue); //Find : new clause
+      xor_clause_flag = false;  // reset immediately
       //if (xor_clause_flag) printf("add new learned clause : %ld\n",new_id);
       c->id = new_id;
-      if (xor_clause_flag)
-      {
-        xor_clause_flag = false;
-      }
       clause_id--;
 
       //if (xor_clause_flag) printf("!!!\n");

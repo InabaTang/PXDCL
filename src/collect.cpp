@@ -352,6 +352,13 @@ void Internal::delete_garbage_clauses () {
 
   flush_all_occs_and_watches ();
 
+  // SEGA: null out references to garbage long XOR clauses before deletion
+  for (size_t ci = 0; ci < long_xor_clauses.size (); ci++) {
+    Clause *c = long_xor_clauses[ci];
+    if (c && c->garbage)
+      long_xor_clauses[ci] = nullptr;
+  }
+
   LOG ("deleting garbage clauses");
 #ifndef QUIET
   int64_t collected_bytes = 0, collected_clauses = 0;
@@ -503,6 +510,17 @@ void Internal::copy_non_garbage_clauses () {
 
   flush_all_occs_and_watches ();
   update_reason_references ();
+
+  // SEGA: null out references to garbage long XOR clauses before deletion,
+  // and update pointers to moved clauses before deallocate_clause frees old memory.
+  for (size_t ci = 0; ci < long_xor_clauses.size (); ci++) {
+    Clause *c = long_xor_clauses[ci];
+    if (c == nullptr) continue;
+    if (c->garbage)
+      long_xor_clauses[ci] = nullptr;
+    else if (c->moved)
+      long_xor_clauses[ci] = c->copy;
+  }
 
   // Replace and flush clause references in 'clauses'.
   //

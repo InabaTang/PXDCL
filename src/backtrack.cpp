@@ -96,6 +96,9 @@ void Internal::backtrack_without_updating_phases (int new_level) {
   if (new_level == level)
     return;
 
+  // SEGA: clearing on backtrack since counters changed
+  xor_full_clause.clear();
+
   stats.backtracks++;
 
   assert (num_assigned == trail.size ());
@@ -126,6 +129,22 @@ void Internal::backtrack_without_updating_phases (int new_level) {
     int lit = trail[i++];
     Var &v = var (lit);
     if (v.level > new_level) {
+      // SEGA: decrement counters + revert parity for long XOR clauses
+      {
+        int vv = abs(lit);
+        if (vv < (int)var_to_long_xor.size()) {
+          bool assigned_is_pos = (lit > 0);
+          for (int packed : var_to_long_xor[vv]) {
+            int ci = packed >> 1;
+            if (long_xor_clauses[ci] == nullptr) continue;  // clause deleted by GC
+            bool clause_is_pos = packed & 1;
+            // Undo the parity flip: same condition as in search_assign
+            if (assigned_is_pos == clause_is_pos)
+              xor_clause_parity[ci] = !xor_clause_parity[ci];
+            xor_clause_counter[ci]--;
+          }
+        }
+      }
       unassign(lit);
 #ifdef LOGGING
       unassigned++;
