@@ -196,6 +196,20 @@ bool Internal::vivify_propagate (int64_t &ticks) {
     if (propagated2 != trail.size ()) {
       const int lit = -trail[propagated2++];
       LOG ("vivify propagating %d over binary clauses", -lit);
+
+      //TODO:For xor clause
+      // Watches &xws = xor_watches(lit);
+      // ticks +=
+      //     1 + cache_lines (xws.size (), sizeof (const_watch_iterator *));
+      // for (const auto &xw : xws)
+      // {
+      //   if (!xw.binary ())
+      //     continue;
+      //   const signed char b = val (xw.blit);
+
+      // }
+
+
       Watches &ws = watches (lit);
       ticks +=
           1 + cache_lines (ws.size (), sizeof (const_watch_iterator *));

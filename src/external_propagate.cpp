@@ -274,6 +274,7 @@ void Internal::force_backtrack (int new_level) {
 // propagated literal is already satisfied, nothing happens.
 //
 bool Internal::external_propagate () {
+  //printf("Does it run?\n");
   if (level)
     require_mode (SEARCH);
   assert (!unsat);
@@ -288,7 +289,7 @@ bool Internal::external_propagate () {
          level, trail.size (), notified);
 #endif
     cb_repropagate_needed = false;
-    // external->reset_extended (); //TODO for inprocessing
+    external->reset_extended (); //TODO for inprocessing
 
     notify_assignments ();
 

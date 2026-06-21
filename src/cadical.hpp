@@ -217,6 +217,7 @@ class File;
 class Testing;
 struct Internal;
 struct External;
+class UnionSet;
 
 /*------------------------------------------------------------------------*/
 
@@ -1075,6 +1076,7 @@ private:
   //
   Internal *internal; // Hidden internal solver.
   External *external; // Hidden API to internal solver mapping.
+  UnionSet *_xorUnion;
 
   friend class Testing; // Access to 'internal' for testing only!
 

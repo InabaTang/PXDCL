@@ -617,7 +617,7 @@ void External::update_molten_literals () {
 int External::solve (bool preprocess_only) {
   reset_extended ();
   update_molten_literals ();
-  int res = internal->solve (preprocess_only);
+  int res = internal->solve (preprocess_only); //Find : insert solve
   check_solve_result (res);
   reset_limits ();
   return res;

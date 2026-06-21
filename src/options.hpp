@@ -134,6 +134,7 @@ OPTION( flushfactor,       3,  1,1e3,0,0,1, "interval increase") \
 OPTION( flushint,        1e5,  1,2e9,0,0,1, "initial limit") \
 OPTION( forcephase,        0,  0,  1,0,0,1, "always use initial phase") \
 OPTION( frat,              0,  0,  2,0,0,1, "1=frat(lrat), 2=frat(drat)") \
+OPTION( gaussian,          0,  0,  1,0,1,1, "open gaussian") \
 OPTION( idrup,             0,  0,  1,0,0,1, "incremental proof format") \
 OPTION( ilb,               0,  0,  2,0,0,1, "ILB (incremental lazy backtrack) (0: no, 1: assumptions only, 2: everything)") \
 OPTION( incdecay,          1,  0,  4,0,0,1, "decay clauses when doing incremental clauses" ) \
@@ -250,6 +251,8 @@ OPTION( transred,          1,  0,  1,0,1,1, "transitive reduction of BIG") \
 OPTION( transredeffort,  1e2,  1,1e5,1,0,1, "relative efficiency per mille") \
 OPTION( transredmaxeff,  1e8,  0,2e9,1,0,1, "maximum efficiency") \
 OPTION( transredmineff,    0,  0,2e9,1,0,1, "minimum efficiency") \
+OPTION( uniondebug,        0,  0,  1,0,1,1, "enable union debug") \
+OPTION( unionset,          1,  0,  1,0,1,1, "enable union set") \
 QUTOPT( verbose,           0,  0,  3,0,0,0, "more verbose messages") \
 OPTION( veripb,            0,  0,  4,0,0,1, "odd=check-deletions, >2 drat") \
 OPTION( vivify,            1,  0,  1,0,1,1, "vivification") \

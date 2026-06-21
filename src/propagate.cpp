@@ -46,7 +46,7 @@ inline int Internal::assignment_level (int lit, Clause *reason) {
   for (const auto &other : *reason) {
     if (other == lit)
       continue;
-    assert (val (other));
+    if (!reason->xor_flag) assert(val (other));
     int tmp = var (other).level;
     if (tmp > res)
       res = tmp;
@@ -66,15 +66,44 @@ void Internal::build_chain_for_units (int lit, Clause *reason,
   else if (!opts.chrono && level && !forced)
     return; // not decision level 0
   assert (lrat_chain.empty ());
-  for (auto &reason_lit : *reason) {
-    if (lit == reason_lit)
-      continue;
-    assert (val (reason_lit));
-    if (!val (reason_lit))
-      continue;
-    const int signed_reason_lit = val (reason_lit) * reason_lit;
-    int64_t id = unit_id (signed_reason_lit);
-    lrat_chain.push_back (id);
+
+  if (reason && reason->xor_flag) {
+    literal_iterator lits = reason->begin ();
+    int size = reason->size;
+
+    bool xor_result = false;
+    for (int i = 0; i < size; i++) {
+      int reason_lit = lits[i];
+      if (lit == reason_lit)
+        continue;
+      assert (val (reason_lit));
+      if (!val (reason_lit))
+        continue;
+      bool lit_value = (val (reason_lit) > 0);
+      xor_result ^= lit_value;
+    }
+
+    for (auto &reason_lit : *reason) {
+      if (lit == reason_lit)
+        continue;
+      assert (val (reason_lit));
+      if (!val (reason_lit))
+        continue;
+      const int signed_reason_lit = val (reason_lit) * reason_lit;
+      int64_t id = unit_id (signed_reason_lit);
+      lrat_chain.push_back (id);
+    }
+  } else {
+    for (auto &reason_lit : *reason) {
+      if (lit == reason_lit)
+        continue;
+      assert (val (reason_lit));
+      if (!val (reason_lit))
+        continue;
+      const int signed_reason_lit = val (reason_lit) * reason_lit;
+      int64_t id = unit_id (signed_reason_lit);
+      lrat_chain.push_back (id);
+    }
   }
   lrat_chain.push_back (reason->id);
 }
@@ -104,8 +133,42 @@ inline void Internal::search_assign (int lit, Clause *reason) {
   if (level)
     require_mode (SEARCH);
 
+  // if (abs(lit) == 24)
+  // {
+  //   printf("assign lit : %d , xor_flag is %d , decide_flag is %d \n",lit,reason->xor_flag,decide_flag_debug);
+  //   if (reason) reason->pri_clause("assigned reason");
+  // }
+  // if (reason->xor_flag) printf("assign_xor\n");
+  // else printf("reason is NULL\n");
+  if (reason != NULL && reason->xor_flag)
+  {
+    bool assigned = false;
+    int assigned_number = 0;
+    for (auto c_lit : *reason)
+    {
+      int vc = val(c_lit);
+      if (vc != 0) assigned_number ++;
+      if (vc > 0) assigned ^= true;
+      else if (c_lit == lit) assigned ^= true;
+      else if (c_lit == -lit) assigned ^= false;
+      // printf("%d:%d ",c_lit,vc);
+    }
+    // printf("\n");
+    //if (assigned_number + 1 != reason->size) printf("something wrong\n");
+    if (!assigned)
+    {
+      printf("Find : lit xor negative , lit is : %d , xor_propagation_flag is %d\n",lit,propagated_xor_debug);
+      printf("xor cluase is : ");
+      if (reason) reason->pri_clause();
+    }
+    assert(assigned);
+  }
   const int idx = vidx (lit);
   const bool from_external = reason == external_reason;
+  // if (lit == -7682)
+  // {
+  //   printf("find 7682,flag is %d\n",flags (idx).eliminated () );
+  // }
   assert (!val (idx));
   assert (!flags (idx).eliminated () || reason == decision_reason ||
           reason == external_reason);
@@ -127,15 +190,53 @@ inline void Internal::search_assign (int lit, Clause *reason) {
     lit_level = 0; // unit
   else if (reason == decision_reason)
     lit_level = level, reason = 0;
-  else if (opts.chrono)
-    lit_level = assignment_level (lit, reason);
+  // else if (opts.chrono)
+  //   lit_level = assignment_level (lit, reason);
   else
     lit_level = level;
   if (!lit_level)
     reason = 0;
 
+  // printf("assign : %d , level is %d , reason is :",lit,lit_level); 
+  // if (reason)
+  // {
+  //   if (reason -> xor_flag) printf("x ");
+  //   for (auto &reason_lit : *reason)
+  //   {
+  //     printf("%d:%d ",reason_lit,val(reason_lit));
+  //   }
+  //   printf("\n");
+  // }
+  // else printf(" Decide\n");
+
   v.level = lit_level;
   v.trail = trail.size ();
+  // if (reason != NULL && reason -> xor_flag)
+  // {
+  //   //printf("reason before is : "); pri_val_clause(reason);
+  //   bool flip_flag = false;
+  //   for (auto &reason_lit : *reason)
+  //   {
+  //     if (abs(reason_lit) == lit) continue;
+  //     if (val(reason_lit) > 0)
+  //     {
+  //       reason_lit = -reason_lit;
+  //       flip_flag ^= true;
+  //     }
+  //   }
+  //   for (auto &reason_lit : *reason)
+  //   {
+  //     if (abs(reason_lit) == abs(lit))
+  //     {
+  //       if (flip_flag) 
+  //       {
+  //         reason_lit = -reason_lit;
+  //       }
+  //       break;
+  //     }
+  //   }
+  //   //printf("lit is %d , reason after is : ",lit); pri_val_clause(reason);
+  // }
   v.reason = reason;
   assert ((int) num_assigned < max_var);
   assert (num_assigned == trail.size ());
@@ -189,11 +290,14 @@ void Internal::search_assume_decision (int lit) {
   new_trail_level (lit);
   notify_decision ();
   LOG ("search decide %d", lit);
+  decide_flag_debug = true;
   search_assign (lit, decision_reason);
+  decide_flag_debug = false;
 }
 
 void Internal::search_assign_driving (int lit, Clause *c) {
   require_mode (SEARCH);
+  //if (c->xor_flag) printf("assign_driving_xor\n");
   search_assign (lit, c);
   notify_assignments ();
 }
@@ -231,6 +335,7 @@ bool Internal::propagate () {
   LOG ("starting propagate");
   START (propagate);
 
+  //printf("start propagate\n");
   // Updating statistics counter in the propagation loops is costly so we
   // delay until propagation ran to completion.
   //
@@ -241,12 +346,129 @@ bool Internal::propagate () {
 
     const int lit = -trail[propagated++];
     LOG ("propagating %d", -lit);
+    //printf("propagate %d\n", -lit);
+
+    // if (opts.unionset)
+    // {
+    //   unsigned eqvStart = _eqvRelationSize;
+    //   //cout << "lit: " << lit << endl;
+    //   const Eqvmap &eqvMap = _eqvMaps[vlit(lit)];
+    //   //cout << "eqvMap size : " << eqvMap.size() << ' ' <<  _eqvMaps[vlit(lit)].size() << endl;
+    //   for (auto &pr : eqvMap)
+    //   {
+    //     //cout << "eqvMap: " << pr.first << " " << pr.second << " " << endl;
+    //     if (pr.first < pr.second) AddEqvRelation(pr.first, pr.second, lit);
+    //   }
+
+    //   _xorConflict = EqvPropagation(eqvStart);
+    //   if (_xorConflict.size() != 0)
+    //   {
+    //     clause = _xorConflict;
+    //     int jump = 0;
+    //     xor_conflict_clause = new_driving_clause(clause.size(), jump);
+    //     // if (xor_conflict_clause[xor_con_size])
+    //     // {
+    //     //   printf("xor conflict clause\n");
+    //     //   pri_val_clause(xor_conflict_clause[xor_con_size]);
+    //     // }
+    //     conflict = xor_conflict_clause;
+    //     clause.clear();
+    //     return !conflict;
+    //   }
+    // }
+
     Watches &ws = watches (lit);
+    XorWatches &xws = xor_watches (abs(lit));
+
+
+    const const_xor_watch_iterator xor_eow = xws.end ();
+    xor_watch_iterator xj = xws.begin ();
+    const_xor_watch_iterator xi = xj;
+    ticks += 1 + cache_lines (xws.size (), sizeof * xi);
+
+    //printf("xor watch start\n");
+    while(xi < xor_eow)
+    {
+      const Watch &xw = *xj ++ = *xi ++;
+      if (xw.clause->size == 0) continue;
+      if (!xw.IsXor())
+      {
+        printf("assert xor_clause"); xw.clause->pri_clause();
+      }
+      assert(xw.IsXor());
+      propagated_xor_debug = true;
+      if (conflict) break;
+      literal_iterator lits = xw.clause->begin ();
+
+      //printf("xor_watch is :" ); xw.clause->pri_clause();
+
+      if (val(lits[0]) and var(lits[0]).reason and var(lits[0]).reason->xor_flag and var (lits[0]).reason == xw.clause)
+      {
+        continue;
+      }
+
+      assert(abs(lits[0]) == abs(lit) || abs(lits[1]) == abs(lit));
+
+      if (abs(lits[0]) == abs(lit)) std::swap(lits[0],lits[1]);
+
+      bool unit = true;
+      bool left = false;
+      for (int i = 1 ; i < xw.clause->size; i ++)
+      {
+        int li = lits[i];
+        if (!val(li))
+        {
+          unit = false;
+          watch_xor_literal(li,lits[0],xw.clause);
+          lits[i] = lits[1] , lits[1] = li;
+          xj --;
+          ticks ++;
+          break;
+        }
+        else if (val(li) > 0)
+        {
+          left ^= true;
+        }
+      }
+
+      //printf("find end\n");
+      if (unit)
+      {
+        //printf("into unit\n");
+        if (val(lits[0]))
+        {
+          left ^= (val(lits[0]) > 0);
+          if (!left)
+          {
+            conflict = xw.clause;
+            break;
+          }
+        }
+        else
+        {
+          int li = lits[0] * (left ? -1 : 1);
+          build_chain_for_units (li, xw.clause, 0);
+          propagated_xor_debug = true;
+          search_assign (li, xw.clause);
+          propagated_xor_debug = false;
+          ticks ++;
+        }
+      }
+    }
+
+    if (xj != xi) {
+      while (xi != xor_eow)
+        *xj++ = *xi++;
+      xws.resize (xj - xws.begin ());
+    }
+
+    //printf("xor_propagations end\n");
 
     const const_watch_iterator eow = ws.end ();
     watch_iterator j = ws.begin ();
     const_watch_iterator i = j;
     ticks += 1 + cache_lines (ws.size (), sizeof *i);
+
 
     while (i != eow) {
 
@@ -254,40 +476,55 @@ bool Internal::propagate () {
       const signed char b = val (w.blit);
       LOG (w.clause, "checking");
 
+      //printf("watch clause is : "); w.clause->pri_clause();
       if (b > 0)
         continue; // blocking literal satisfied
-      
-      Clause *Con = w.clause;
 
-      if (w.IsXor())
-      {
-        // if (LitKnown(xorCon[0]) && _reason[xorCon[0].Var()].IsXorReason() 
-        //     && _reason[xorCon[0].Var()].ClauseID() == xorWatched[i]._cRef) 
+      // Clause *Con = w.clause;
+
+      if (w.IsXor ()) {
+        printf("Why is still xor?\n");
+        // if (LitKnown(xorCon[0]) && _reason[xorCon[0].Var()].IsXorReason()
+        //     && _reason[xorCon[0].Var()].ClauseID() ==
+        //     xorWatched[i]._cRef)
         // {
         //   i++;
         //   continue;
         // }
-      }
-      else
-      {
+        // w.clause->pri_clause();
+
+        // printf("blit : %d",w.blit);
+        // printf("xor clause : ");
+        // int zero_number = 0;
+        // literal_iterator lits_begin = w.clause->begin ();
+        // literal_iterator lits_end = lits_begin + w.clause->size;
+        // for (literal_iterator xr = lits_begin ; xr != lits_end; xr++) 
+        // {
+        //   printf("%d:%d  ",*xr, val(*xr));
+        //   if (val(*xr) == 0) zero_number ++;
+        // }
+        // printf("  %d \n",zero_number);
+      } else {
         if (w.binary ()) {
 
           // assert (w.clause->redundant || !w.clause->garbage);
 
           // In principle we can ignore garbage binary clauses too, but that
-          // would require to dereference the clause pointer all the time with
+          // would require to dereference the clause pointer all the time
+          // with
           //
           // if (w.clause->garbage) { j--; continue; } // (*)
           //
           // This is too costly.  It is however necessary to produce correct
-          // proof traces if binary clauses are traced to be deleted ('d ...'
-          // line) immediately as soon they are marked as garbage.  Actually
-          // finding instances where this happens is pretty difficult (six
-          // parallel fuzzing jobs in parallel took an hour), but it does
-          // occur.  Our strategy to avoid generating incorrect proofs now is
-          // to delay tracing the deletion of binary clauses marked as garbage
-          // until they are really deleted from memory.  For large clauses
-          // this is not necessary since we have to access the clause anyhow.
+          // proof traces if binary clauses are traced to be deleted ('d
+          // ...' line) immediately as soon they are marked as garbage.
+          // Actually finding instances where this happens is pretty
+          // difficult (six parallel fuzzing jobs in parallel took an hour),
+          // but it does occur.  Our strategy to avoid generating incorrect
+          // proofs now is to delay tracing the deletion of binary clauses
+          // marked as garbage until they are really deleted from memory.
+          // For large clauses this is not necessary since we have to access
+          // the clause anyhow.
           //
           // Thanks go to Mathias Fleury, who wanted me to explain why the
           // line '(*)' above was in the code. Removing it actually really
@@ -330,9 +567,9 @@ bool Internal::propagate () {
           assert (lits[0] == lit || lits[1] == lit);
 
           // Simplify code by forcing 'lit' to be the second literal in the
-          // clause.  This goes back to MiniSAT.  We use a branch-less version
-          // for conditionally swapping the first two literals, since it
-          // turned out to be substantially faster than this one
+          // clause.  This goes back to MiniSAT.  We use a branch-less
+          // version for conditionally swapping the first two literals,
+          // since it turned out to be substantially faster than this one
           //
           //  if (lits[0] == lit) swap (lits[0], lits[1]);
           //
@@ -346,12 +583,13 @@ bool Internal::propagate () {
           else {
 
             // This follows Ian Gent's (JAIR'13) idea of saving the position
-            // of the last watch replacement.  In essence it needs two copies
-            // of the default search for a watch replacement (in essence the
-            // code in the 'if (v < 0) { ... }' block below), one starting at
-            // the saved position until the end of the clause and then if that
-            // one failed to find a replacement another one starting at the
-            // first non-watched literal until the saved position.
+            // of the last watch replacement.  In essence it needs two
+            // copies of the default search for a watch replacement (in
+            // essence the code in the 'if (v < 0) { ... }' block below),
+            // one starting at the saved position until the end of the
+            // clause and then if that one failed to find a replacement
+            // another one starting at the first non-watched literal until
+            // the saved position.
 
             const int size = w.clause->size;
             const literal_iterator middle = lits + w.clause->pos;
@@ -413,10 +651,11 @@ bool Internal::propagate () {
               // lrat_chain.clear (); done in search_assign
               ticks++;
 
-              // Similar code is in the implementation of the SAT'18 paper on
-              // chronological backtracking but in our experience, this code
-              // first does not really seem to be necessary for correctness,
-              // and further does not improve running time either.
+              // Similar code is in the implementation of the SAT'18 paper
+              // on chronological backtracking but in our experience, this
+              // code first does not really seem to be necessary for
+              // correctness, and further does not improve running time
+              // either.
               //
               if (opts.chrono > 1) {
 
@@ -425,9 +664,9 @@ bool Internal::propagate () {
                 if (other_level > var (lit).level) {
 
                   // The assignment level of the new unit 'other' is larger
-                  // than the assignment level of 'lit'.  Thus we should find
-                  // another literal in the clause at that higher assignment
-                  // level and watch that instead of 'lit'.
+                  // than the assignment level of 'lit'.  Thus we should
+                  // find another literal in the clause at that higher
+                  // assignment level and watch that instead of 'lit'.
 
                   assert (size > 2);
 
@@ -462,9 +701,7 @@ bool Internal::propagate () {
             }
           }
         }
-
       }
-
     }
 
     if (j != i) {
@@ -510,6 +747,10 @@ bool Internal::propagate () {
   }
   STOP (propagate);
 
+  // if (conflict && conflict->xor_flag)
+  //   printf ("! xor_confilct\n");
+  // printf("propagate end \n");
+
   return !conflict;
 }
 
@@ -519,6 +760,8 @@ void Internal::propergate () {
 
   assert (!conflict);
   assert (propagated == trail.size ());
+
+  //printf("Is it run??\n");
 
   while (propergated != trail.size ()) {
 

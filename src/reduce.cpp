@@ -35,6 +35,8 @@ void Internal::mark_clauses_to_be_flushed () {
   const int tier1limit = tier1[false];
   const int tier2limit = max (tier1limit, tier2[false]);
   for (const auto &c : clauses) {
+    if (c->xor_flag)
+      continue; //don't do xor clause
     if (!c->redundant)
       continue; // keep irredundant
     if (c->garbage)
@@ -100,6 +102,8 @@ void Internal::mark_useless_redundant_clauses_as_garbage () {
   stack.reserve (stats.current.redundant);
 
   for (const auto &c : clauses) {
+    if (c->xor_flag)
+      continue; //don't do xor clause
     if (!c->redundant)
       continue; // Keep irredundant.
     if (c->garbage)
@@ -140,6 +144,7 @@ void Internal::mark_useless_redundant_clauses_as_garbage () {
   while (i != t) {
     Clause *c = *i++;
     LOG (c, "marking useless to be collected");
+    assert(!c->xor_flag);
     mark_garbage (c);
     stats.reduced++;
   }

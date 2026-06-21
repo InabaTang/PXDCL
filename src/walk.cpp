@@ -715,6 +715,8 @@ inline void Internal::walk_save_minimum (Walker &walker) {
   }
   if (walker.minimum == 0) {
     for (auto c : clauses) {
+      if (c->xor_flag) 
+        continue;
       if (c->garbage)
         continue;
       if (c->redundant)
@@ -849,7 +851,8 @@ int Internal::walk_round (int64_t limit, bool prev) {
     double size = 0;
     int64_t n = 0;
     for (const auto c : clauses) {
-
+      if (c->xor_flag)
+        continue;
       if (c->garbage)
         continue;
       if (c->redundant) {

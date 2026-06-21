@@ -6,6 +6,7 @@
 // Wrapped build specific headers which should go first.
 
 #include "inttypes.hpp"
+#include "union.hpp"
 
 /*------------------------------------------------------------------------*/
 
@@ -20,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <variant>
+#include <cmath>
 
 // Less common 'C' header.
 
@@ -68,6 +70,7 @@ extern "C" {
 #include "flags.hpp"
 #include "format.hpp"
 #include "frattracer.hpp"
+#include "gauss.hpp"
 #include "heap.hpp"
 #include "idruptracer.hpp"
 #include "instantiate.hpp"
@@ -97,6 +100,7 @@ extern "C" {
 #include "sweep.hpp"
 #include "terminal.hpp"
 #include "tracer.hpp"
+#include "union.hpp"
 #include "util.hpp"
 #include "var.hpp"
 #include "veripbtracer.hpp"
@@ -111,6 +115,8 @@ extern "C" {
 }
 /*------------------------------------------------------------------------*/
 
+using Eqvmap = std::unordered_map<int,int>;
+
 namespace CaDiCaL {
 
 using namespace std;
@@ -122,6 +128,10 @@ struct Walker;
 class Tracer;
 class FileTracer;
 class StatTracer;
+class UnionSet;
+struct XorLine;
+struct SegmentTree;
+struct Gauss_line_xs;
 
 struct CubesWithStatus {
   int status = 0;
@@ -237,15 +247,16 @@ struct Internal {
   vector<int64_t> ntab;         // number of one-sided occurrences table
   vector<Bins> big;             // binary implication graph
   vector<Watches> wtab;         // table of watches for all literals
-  Clause *conflict;             // set in 'propagation', reset in 'analyze'
-  Clause *ignore;               // ignored during 'vivify_propagate'
-  Clause *dummy_binary;         // Dummy binary clause for subsumption
-  Clause *external_reason;      // used as reason at external propagations
-  Clause *newest_clause;        // used in external_propagate
-  bool force_no_backtrack;      // for new clauses with external propagator
-  bool from_propagator;         // differentiate new clauses...
-  bool ext_clause_forgettable;  // Is new clause from propagator forgettable
-  int changed_val;              // used for ILB
+  vector<XorWatches> xor_tab;
+  Clause *conflict;            // set in 'propagation', reset in 'analyze'
+  Clause *ignore;              // ignored during 'vivify_propagate'
+  Clause *dummy_binary;        // Dummy binary clause for subsumption
+  Clause *external_reason;     // used as reason at external propagations
+  Clause *newest_clause;       // used in external_propagate
+  bool force_no_backtrack;     // for new clauses with external propagator
+  bool from_propagator;        // differentiate new clauses...
+  bool ext_clause_forgettable; // Is new clause from propagator forgettable
+  int changed_val;             // used for ILB
   size_t notified;           // next trail position to notify external prop
   Clause *probe_reason;      // set during probing
   size_t propagated;         // next trail position to propagate
@@ -326,8 +337,45 @@ struct Internal {
   const Range vars; // Provides safe variable iteration.
   const Sange lits; // Provides safe literal iteration.
 
-  //for xor clause
+  // for xor clause
   int xor_clause_flag;
+  bool propagated_xor_debug;
+  bool decide_flag_debug;
+  Clause *xor_decide_clause;
+
+
+  // for xor gauss
+  int xor_clause_number; // not include gauss clause
+  vector<Clause *> xor_clauses;
+  int **gauss_dp;
+  int **gauss_pre;
+  vector<XorLine> xor_lines;
+  int *segment_init;
+  vector<int> gauss_A;
+  SegmentTree *gauss_segment;
+  Gauss_line_xs *line_xs;
+  int *line_xs_left;
+  int line_xs_id;
+  int block_number;
+  vector<vector<int>> xor_kdd;
+
+  vector<int> gauss_division_v;
+
+
+  int gauss_division();
+  int gauss_elimination();
+  int gauss_old_elimination();
+  int gauss_check(int mid);
+  void gauss_division_preprocessing(int L);
+  void make_gauss_vector();
+  
+
+  int clause_contains_xor_fixed_literal (Clause *c);
+
+  int handle_xor_decision ();
+  bool need_xor_decision ();
+  int find_priority_xor_variable ();
+  void pri_val_clause (Clause *c);
 
   /*----------------------------------------------------------------------*/
 
@@ -414,6 +462,12 @@ struct Internal {
     return (lit < 0) + 2u * (unsigned) vidx (lit);
   }
 
+  int slit (int v_lit) const
+  {
+    int sign = v_lit % 2 ? -1 : 1;
+    return ( (v_lit / 2) * sign );
+  }
+
   int u2i (unsigned u) {
     assert (u > 1);
     int res = u / 2;
@@ -470,6 +524,8 @@ struct Internal {
   Occs &occs (int lit) { return otab[vlit (lit)]; }
   int64_t &noccs (int lit) { return ntab[vlit (lit)]; }
   Watches &watches (int lit) { return wtab[vlit (lit)]; }
+  XorWatches &xor_watches (int lit) { return xor_tab[vlit (abs (lit))]; }
+
 
   // Variable bumping through exponential VSIDS (EVSIDS) as in MiniSAT.
   //
@@ -633,6 +689,13 @@ struct Internal {
     LOG (c, "watch %d blit %d in", lit, blit);
   }
 
+  inline void watch_xor_literal (int lit, int blit, Clause *c) {
+    // assert (lit != blit);
+    XorWatches &ws = xor_watches (lit);
+    ws.push_back (Watch (blit, c));
+    LOG (c, "watch xor %d blit %d in", lit, blit);
+  }
+
   // Watch literal 'lit' in clause with blocking literal 'blit'.
   // Inlined here, since it occurs in the tight inner loop of 'propagate'.
   //
@@ -647,10 +710,21 @@ struct Internal {
   // of a clause and during connecting back all watches after preprocessing.
   //
   inline void watch_clause (Clause *c) {
-    const int l0 = c->literals[0];
-    const int l1 = c->literals[1];
-    watch_literal (l0, l1, c);
-    watch_literal (l1, l0, c);
+    if (c->xor_flag) {
+      const int l0 = c->literals[0];
+      const int l1 = c->literals[1];
+      watch_xor_literal (l0, l1, c);
+      watch_xor_literal (l1, l0, c);
+    } else {
+      const int l0 = c->literals[0];
+      const int l1 = c->literals[1];
+      watch_literal (l0, l1, c);
+      watch_literal (l1, l0, c);
+    }
+    // const int l0 = c->literals[0];
+    // const int l1 = c->literals[1];
+    // watch_literal (l0, l1, c);
+    // watch_literal (l1, l0, c);
   }
 
   inline void unwatch_clause (Clause *c) {
@@ -658,6 +732,8 @@ struct Internal {
     const int l1 = c->literals[1];
     remove_watch (watches (l0), c);
     remove_watch (watches (l1), c);
+    remove_watch (xor_watches (l0), c);
+    remove_watch (xor_watches (l1), c);
   }
 
   // Update queue to point to last potentially still unassigned variable.
@@ -931,6 +1007,7 @@ struct Internal {
   void mark_satisfied_clauses_as_garbage ();
   void copy_clause (Clause *);
   void flush_watches (int lit, Watches &);
+  void flush_xor_watches (int lit, Watches &);
   size_t flush_occs (int lit);
   void flush_all_occs_and_watches ();
   void update_reason_references ();
@@ -1590,9 +1667,11 @@ struct Internal {
   // negative.  We also avoid taking the absolute value.
   //
   signed char val (int lit) const {
+    if (abs(lit) > max_var) printf("lit is : %d, max_var is : %d\n",lit,max_var);
     assert (-max_var <= lit);
     assert (lit);
-    assert (lit <= max_var);
+    if (lit > max_var)
+      assert (lit <= max_var);
     return vals[lit];
   }
 
@@ -1804,7 +1883,24 @@ struct Internal {
   //
   void warning (const char *, ...) CADICAL_ATTRIBUTE_FORMAT (2, 3);
 
-  //for xor clause
+  // for xor union
+  int _eqvRelationSize;
+  int *_eqvReasons;
+  UnionSet *_xorUnion;
+  Eqvmap *_eqvMaps;
+  std::pair<int,int> *_eqvRelations;
+  vector<int> _xorConflict;
+  Clause *_eqvconflict;
+  int *_lv2Trail;
+  int *_lv2EqvRelation;
+  Clause *xor_conflict_clause;
+  int xor_con_size;
+
+  void AddXorGate(Clause *xorcon);
+  void AddEqvImpl(int a ,int b , int c);
+  void AddEqvRelation(int lit1 , int lit2 , int reason);
+  vector<int> EqvPropagation(unsigned start);
+  void make_vector_to_xor_confilct(int lvar, vector<int> clause);
 };
 
 // Fatal internal error which leads to abort.

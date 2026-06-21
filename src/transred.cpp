@@ -8,7 +8,7 @@ namespace CaDiCaL {
 // binary clauses and is usually pretty fast.  It will also find some failed
 // literals (in the binary implication graph).
 
-void Internal::transred () {
+void Internal::transred () { //for binary clauses but not finish xor
   if (!opts.transred)
     return;
   if (unsat)

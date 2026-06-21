@@ -34,6 +34,7 @@ inline bool Internal::backbone_propagate (int64_t &ticks) {
     if (propagated2 != trail.size ()) {
       const int lit = -trail[propagated2++];
       LOG ("backbone propagating %d over binary clauses", -lit);
+
       Watches &ws = watches (lit);
       ticks +=
           1 + cache_lines (ws.size (), sizeof (const_watch_iterator *));

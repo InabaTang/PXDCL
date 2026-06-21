@@ -40,7 +40,10 @@ int Internal::trivially_false_satisfiable () {
       continue;
     if (c->redundant)
       continue;
+    if (c->xor_flag) //TODO: xor_lucky
+      continue;
     bool satisfied = false, found_negative_literal = false;
+    if (c->xor_flag) printf("xor clause in lucky\n");
     for (const auto &lit : *c) {
       const signed char tmp = val (lit);
       if (tmp > 0) {
@@ -88,6 +91,8 @@ int Internal::trivially_true_satisfiable () {
     if (c->garbage)
       continue;
     if (c->redundant)
+      continue;
+    if (c->xor_flag) //TODO: xor_unlucky
       continue;
     bool satisfied = false, found_positive_literal = false;
     for (const auto &lit : *c) {

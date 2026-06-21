@@ -392,6 +392,7 @@ Solver::Solver () {
   internal = new Internal ();
   DeferDeletePtr<Internal> delete_internal (internal);
   TRACE ("init");
+  _xorUnion = new UnionSet (internal);
   external = new External (internal);
   DeferDeletePtr<External> delete_external (external);
   STATE (CONFIGURING);
@@ -813,7 +814,7 @@ int Solver::call_external_solve_and_check_results (bool preprocess_only) {
   transition_to_steady_state ();
   assert (state () & READY);
   STATE (SOLVING);
-  const int res = external->solve (preprocess_only);
+  const int res = external->solve (preprocess_only); //Find : external solve
   if (res == 10)
     STATE (SATISFIED);
   else if (res == 20)

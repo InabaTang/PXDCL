@@ -36,6 +36,8 @@ contrib=yes
 ipasir=yes
 shared=no
 pic=no
+enable_m4ri=no
+with_m4ri="/home/lijq/XORSAT/XDCL/cadical/m4ri"
 
 #--------------------------------------------------------------------------#
 
@@ -140,6 +142,7 @@ code to a new platform and are usually not necessary to change.
 --no-closefrom     use our own 'closefrom' replacement
 --no-flexible      do not use flexible array members
 --no-unlocked      force compilation without unlocked IO
+--with-m4ri[=DIR]  enable support for m4ri library (optionally specify path)
 EOF
 exit 0
 }
@@ -184,6 +187,15 @@ do
     -s|--symbols) options="$options -ggdb3";;
     -static*) options="$options $1";;
     -shared|--shared) shared=yes;;
+
+    --with-m4ri=*)
+      with_m4ri="`expr \"$1\" : '--with-m4ri=\(.*\)'`"
+      enable_m4ri=yes
+      ;;
+    --with-m4ri)
+      with_m4ri=yes
+      enable_m4ri=yes
+      ;;
 
     CXX=*)
       CXX="`expr \"$1\" : 'CXX=\(.*\)'`"
@@ -403,6 +415,113 @@ else
 fi
 
 #--------------------------------------------------------------------------#
+# Check for m4ri library if requested.
+
+if [ $enable_m4ri = yes ]
+then
+  msg "checking for m4ri ..."
+
+  m4ri_incdir=""
+  m4ri_libdir=""
+
+  check_m4ri_dir () {
+    base="$1"
+    # 查找头文件：常见位置
+    for inc in \
+      "$base/include/m4ri.h" \
+      "$base/m4ri.h" \
+      "$base/src/m4ri.h" \
+      "$base/m4ri/m4ri.h" \
+      "$base/../m4ri.h" \
+      "$base/../include/m4ri.h"
+    do
+      if [ -f "$inc" ]; then
+        m4ri_incdir="`dirname "$inc"`"
+        break
+      fi
+    done
+    if [ -z "$m4ri_incdir" ]; then
+      msg "头文件未找到在 $base 及其子目录"
+      return 1
+    fi
+    # 查找库目录：可能的位置
+    for libd in \
+      "$base/lib" \
+      "$base/.libs" \
+      "$base/../.libs" \
+      "$base/build/.libs" \
+      "$base/src/.libs"
+    do
+      if [ -d "$libd" ] && (ls "$libd"/libm4ri.so* >/dev/null 2>&1 || ls "$libd"/libm4ri.a >/dev/null 2>&1); then
+        m4ri_libdir="$libd"
+        msg "找到库目录: $m4ri_libdir"
+        return 0
+      fi
+    done
+    msg "库目录未找到在 $base 及其子目录"
+    return 1
+  }
+
+  msg "头文件目录: $m4ri_incdir"
+  msg "库目录: $m4ri_libdir"
+  if [ "$with_m4ri" != "yes" ]; then
+    if check_m4ri_dir "$with_m4ri"; then
+      msg "found m4ri in user-specified directory '$with_m4ri'"
+    else
+      die "m4ri not found in '$with_m4ri' (missing headers or library dir)"
+    fi
+  else
+    for dir in /usr /usr/local /opt/local /opt/homebrew; do
+      if check_m4ri_dir "$dir"; then
+        msg "found m4ri in '$dir'"
+        break
+      fi
+    done
+    if [ -z "$m4ri_incdir" ] || [ -z "$m4ri_libdir" ]; then
+      die "m4ri not found in standard locations. Use --with-m4ri=DIR to specify."
+    fi
+  fi
+
+  # 添加编译和链接标志
+  CXXFLAGS="$CXXFLAGS -I$m4ri_incdir"
+  CFLAGS="$CFLAGS -I$m4ri_incdir"
+  libs="$libs -L$m4ri_libdir -lm4ri"
+  libs="$libs -Wl,-rpath,$m4ri_libdir"
+
+  # 提取 libm4ri.la 中的依赖（如果有）
+  if [ -f "$m4ri_libdir/libm4ri.la" ]; then
+    m4ri_deps=$(sed -n -e "s/^dependency_libs='\(.*\)'/\1/p" "$m4ri_libdir/libm4ri.la")
+    if [ -n "$m4ri_deps" ]; then
+      msg "m4ri additional dependencies: $m4ri_deps"
+      libs="$libs $m4ri_deps"
+    fi
+  else
+    # 没有 .la 文件时，尝试常见依赖（BLAS 和数学库）
+    msg "libm4ri.la not found, assuming -lblas -lm are needed"
+    libs="$libs -lblas -lm"
+  fi
+
+  # 编译测试验证
+  feature=./configure-m4ri-test
+  cat <<EOF > $feature.cpp
+extern "C" {
+#include <m4ri.h>
+}
+int main () {
+  mzd_t *M = mzd_init(10, 10);
+  mzd_free(M);
+  return 0;
+}
+EOF
+  if $CXX $CXXFLAGS $libs -o $feature.exe $feature.cpp 2>>configure.log
+  then
+    msg "m4ri library seems to work"
+  else
+    die "failed to compile/link with m4ri (see configure.log)"
+  fi
+fi
+
+#--------------------------------------------------------------------------#
 
 # Since C++11 is becoming the standard newer versions of 'g++' (7.3 for
 # instance) discourage certain GCC extensions, particularly the GCC version
@@ -614,7 +733,7 @@ fi
 #--------------------------------------------------------------------------#
 
 # Instantiate '../makefile.in' template to produce 'makefile' in 'build'.
-
+msg "libs='$libs'"
 msg "compiling C++ with ${HILITE}'$CXX $CXXFLAGS'${NORMAL}"
 msg "compiling C with ${HILITE}'$CC $CFLAGS'${NORMAL}"
 

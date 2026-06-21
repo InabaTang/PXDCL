@@ -1,0 +1,51 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(gdb) 启动",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/cadical",
+            "args": [
+                //"test/xor/R08_xcnf_000.txt"
+                //"../../sat2xorsat/output/7cbc3ce2052ba7c5b501f75af58ab3c4-simon-r22-1.sanitized.xnf"
+                //"../../sat2xorsat/output/f054205a7cef98e5021016f864c69816-summle_X11112_steps6_I1-2-2-4-4-8-25-100.xnf"
+                //"../../sat2xorsat/output/6f7a0e1cf94b6b26eafc08a827a692ce-circuit_64in64out_with_64gates_8in5out_dist256_seed1.sanitized.xnf"
+                //"../../sat2xorsat/output/0d3fcbb89bfb8e821058ba3ea4284de1-j3045_10_gmto_b.xnf"
+                //"../../sat2xorsat/output/77b7f7bbf75faaee28f473b9941de103-Folkman-185-19924337.sanitized.xnf"
+                //"../../sat2xorsat/output/af750c18578d52e60472315692ad83c0-si2-b03m-m800-03.xnf"
+                //"../../sat2xorsat/output/303480ca7e8322d771c94caf4ebd4e95-circuit_48in64out_with_700gates_4in4out_dist128_seed1.sanitized.xnf"
+                //"../../sat2xorsat/xorsat_2025/b5431f41e3264c64508c30da215c69c6-mod2c-rand3bip-sat-250-3.shuffled-as.sat05-2535.xnf"
+                //"../../sat2xorsat/output/70ef2b6bdc4101a0e35cf3d165571fe3-qwh.50.1250.shuffled-as.sat03-1655.xnf"
+                "../../sat2xorsat/output/f86dad4ba35369eb720a0c9ddc45037a-combined-crypto1-wff-seed-1-wffvars-450-cryptocplx-40-overlap-2.xnf"
+                //"../../sat2xorsat/xorsat_2025/8af30680e9329ae30c2cdbece636c470-simon-r23-0.sanitized.xnf"
+                //"../../sat2xorsat/xorsat_2025/84282cd481f7614f444951064c707030-simon-r20-1.sanitized.xnf"
+                //"../../sat2xorsat/xorsat_2025/00fd8ac9acd186a7a78a2c4d92f90de1-2.normalised.xnf"
+                //"../../sat2xorsat/xorsat_2025/e3bd4a397f34a99c47d1b2e0e9abcd43-crusti_g2io_250_0.2_255_43.normalised.xnf"
+                //"../../sat2xorsat/xorsat_2025/b5431f41e3264c64508c30da215c69c6-mod2c-rand3bip-sat-250-3.shuffled-as.sat05-2535.xnf"
+                //"../../sat2xorsat/xorsat_2025/6cd9571bc71cc0c3fb08aeafb9ca37e4-sted1_0x24204-330.xnf"
+                //"../../sat2xorsat/xorsat_2025/4e3195a382f5af213444736fcc8b364f-case1.normalised.xnf"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "为 gdb 启用整齐打印",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "将反汇编风格设置为 Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}

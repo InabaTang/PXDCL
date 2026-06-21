@@ -25,7 +25,7 @@ Internal::Internal ()
       target_assigned (0), no_conflict_until (0), unsat_constraint (false),
       marked_failed (true), sweep_incomplete (false),
       randomized_deciding (false), citten (0), num_assigned (0), proof (0),
-      opts (this),
+      opts (this),xor_kdd(500),
 #ifndef QUIET
       profiles (this), force_phase_messages (false),
 #endif
@@ -130,6 +130,7 @@ void Internal::enlarge (int new_max_var) {
   if (lrat || frat)
     enlarge_zero (unit_clauses_idx, 2 * new_vsize);
   enlarge_only (wtab, 2 * new_vsize);
+  enlarge_only (xor_tab, 2 * new_vsize);
   enlarge_only (vtab, new_vsize);
   enlarge_zero (parents, new_vsize);
   enlarge_only (links, new_vsize);
@@ -151,11 +152,15 @@ void Internal::enlarge (int new_max_var) {
   enlarge_zero (marks, new_vsize);
 }
 
-void Internal::init_vars (int new_max_var) {
+void Internal::init_vars (int new_max_var) { // Find : init_eqv
   if (new_max_var <= max_var)
     return;
   // New variables can be created that can invoke enlarge anytime (via calls
   // during ipasir-up call-backs), thus assuming (!level) is not correct
+  _eqvMaps = new Eqvmap[(new_max_var + 2) * 2];
+  _eqvRelations = new pair<int, int>[(new_max_var + 2) * 2];
+  _eqvReasons = new int[(new_max_var + 2) * 2];
+  xor_conflict_clause = new Clause ;
   LOG ("initializing %d internal variables from %d to %d",
        new_max_var - max_var, max_var + 1, new_max_var);
   if ((size_t) new_max_var >= vsize)
@@ -172,6 +177,12 @@ void Internal::init_vars (int new_max_var) {
   assert (!btab[0]);
   int old_max_var = max_var;
   max_var = new_max_var;
+  if (opts.unionset) {
+    // _xorUnion = new UnionSet();
+    _lv2Trail = new int[(new_max_var + 2) * 2];
+    _lv2EqvRelation = new int[(new_max_var + 2) * 2];
+    _xorUnion->AllocateMemory (new_max_var);
+  }
   init_queue (old_max_var, new_max_var);
   init_scores (old_max_var, new_max_var);
   int initialized = new_max_var - old_max_var;
@@ -320,14 +331,21 @@ int Internal::cdcl_loop_with_inprocessing () {
       rephase (); // reset variable phases
     else if (reducing ())
       reduce (); // collect useless clauses
-    else if (inprobing ())
-      inprobe (); // schedule of inprocessing
-    else if (ineliminating ())
-      elim (); // variable elimination
-    else if (compacting ())
-      compact (); // collect variables
-    else if (conditioning ())
-      condition (); // globally blocked clauses
+
+    else if (segaing())
+    {
+      sega();
+    }
+    // else if (conditioning ())
+    //   condition (); // globally blocked clauses
+
+    // TODO:
+    //  else if (inprobing ())
+    //    inprobe (); // schedule of inprocessing
+    //  else if (ineliminating ())
+    //    elim (); // variable elimination
+    //  else if (compacting ())
+    //    compact (); // collect variables
     else
       res = decide (); // next decision
   }
@@ -775,10 +793,10 @@ void Internal::preprocess_quickly (bool always) {
   if (opts.factor)
     factor ();
 
-  if (opts.fastelim)
-    elimfast ();
-    // if (opts.condition)
-    // condition (false);
+  // if (opts.fastelim)
+  //   elimfast ();
+  // if (opts.condition)
+  // condition (false);
 #ifndef QUIET
   after.vars = active ();
   after.clauses = stats.current.irredundant;
@@ -794,19 +812,34 @@ void Internal::preprocess_quickly (bool always) {
 
 int Internal::preprocess (bool always) {
   int res = 0;
-  if (!level && !unsat && opts.luckyearly)
-    res = lucky_phases ();
-  if (res)
-    return res;
+  // if (!level && !unsat && opts.luckyearly)
+  //   res = lucky_phases ();
+  // if (res)
+  //   return res;
 
   if (opts.deduplicateallinit && !stats.deduplicatedinitrounds)
     deduplicate_all_clauses ();
 
-  preprocess_quickly (always);
+  if (opts.gaussian)
+  {
+    long long max_gauss = 1e9;
+    if (1LL * max_var * xor_clauses.size() <= 1LL * max_gauss)
+      gauss_old_elimination();
+    else
+    {
+      cout << "so big to gauss" << endl;
+      int L = gauss_division();
+      gauss_division_preprocessing(L);
+      gauss_elimination();
+    }
+    
+  }
+
+  //preprocess_quickly (always);
   for (int i = 0; i < lim.preprocessing; i++)
     if (!preprocess_round (i))
       break;
-  report (')');
+  // report (')');
   if (unsat)
     return 20;
   return 0;
@@ -950,7 +983,7 @@ int Internal::local_search () {
 // if preprocess_only is false and opts.ilb is true we do not preprocess
 // such that we do not have to backtrack to level 0.
 //
-int Internal::solve (bool preprocess_only) {
+int Internal::solve (bool preprocess_only) { // Find : Internal solve
   assert (clause.empty ());
   stats.searches++;
   START (solve);
@@ -984,23 +1017,23 @@ int Internal::solve (bool preprocess_only) {
     if (!preprocess_only)
       init_search_limits ();
   }
-  if (!preprocess_only) {
-    if (!res && !level)
-      res = local_search ();
-  }
+  // if (!preprocess_only) {
+  //   if (!res && !level)
+  //     res = local_search ();
+  // }
   if (!res && !level)
     res = preprocess (preprocess_only);
   if (!preprocess_only) {
-    if (!res && !level && opts.luckylate)
-      res = lucky_phases ();
-    if (!res && !level)
-      res = local_search ();
-    if (!res)
-      decay_clauses_upon_incremental_clauses ();
+    // if (!res && !level && opts.luckylate)
+    //   res = lucky_phases ();
+    // if (!res && !level)
+    //   res = local_search ();
+    // if (!res)
+    //   decay_clauses_upon_incremental_clauses ();
     if (!res || (res == 10 && external_prop)) {
       if (res == 10 && external_prop && level)
         backtrack ();
-      res = cdcl_loop_with_inprocessing ();
+      res = cdcl_loop_with_inprocessing (); // Find : main solver
     }
   }
   finalize (res);
@@ -1018,7 +1051,7 @@ int Internal::already_solved () {
   } else {
     if (level && !opts.ilb)
       backtrack ();
-    if (!level && !propagate ()) { //Find : propagate
+    if (!level && !propagate ()) { // Find : propagate
       LOG ("root level propagation produces conflict");
       learn_empty_clause ();
       res = 20;
@@ -1261,6 +1294,47 @@ bool Internal::traverse_clauses (ClauseIterator &it) {
     eclause.clear ();
   }
   return true;
+}
+
+// for xor clause
+int Internal::handle_xor_decision () {
+  for (auto lit : *xor_decide_clause) {
+    if (!val (lit)) {
+      return lit;
+    }
+  }
+}
+
+bool Internal::need_xor_decision () {
+  for (auto clause : clauses) {
+    if (clause->xor_flag && !clause->garbage) {
+      int unassigned_count = 0;
+      for (auto lit : *clause) {
+        if (!val (lit))
+          unassigned_count++;
+      }
+      if (unassigned_count > 0) {
+        xor_decide_clause = clause;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void Internal::pri_val_clause (Clause *c) {
+  printf ("Clause literals: ");
+  if (c->size == 0) {
+    printf ("EMPTY by Decide\n");
+    return;
+  }
+  if (c->xor_flag)
+    printf ("x ");
+  for (int i = 0; i < c->size; ++i) {
+    printf ("%d:%d-%d ", c->literals[i], val (c->literals[i]),
+            var (c->literals[i]).level);
+  }
+  printf ("\n");
 }
 
 } // namespace CaDiCaL

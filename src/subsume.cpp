@@ -184,6 +184,8 @@ void Internal::strengthen_clause (Clause *c, int lit) {
 inline int Internal::try_to_subsume_clause (Clause *c,
                                             vector<Clause *> &shrunken) {
 
+  if (c->xor_flag)
+    return 0;
   stats.subtried++;
   assert (!level);
   LOG (c, "trying to subsume");
@@ -262,6 +264,7 @@ inline int Internal::try_to_subsume_clause (Clause *c,
       //
       const Occs &os = occs (sign * lit);
       for (const auto &e : os) {
+        if (e->xor_flag) continue;
         assert (!e->garbage); // sanity check
         if (e->garbage)
           continue; // defensive: not needed

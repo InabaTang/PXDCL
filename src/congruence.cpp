@@ -7861,6 +7861,8 @@ bool Internal::extract_gates (bool remove_units_before_run) {
   for (auto c : clauses) {
     if (c->garbage)
       continue;
+    if (c->xor_flag)
+      continue;
     LOG (c, "watched");
     ++nb_clauses;
   }

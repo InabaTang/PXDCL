@@ -119,18 +119,15 @@ struct Clause {
   // virtual sizes and the compiler can somehow figure that out, because
   // that would in turn produce a warning.
 
-
-  //for xor cluase
-  bool xor_flag; // if xor cluase , 1.
+  // for xor cluase
+  int xor_flag; // if xor cluase , 1.
+  int xor_conflict_flag;
 
 #ifndef NFLEXIBLE
   int literals[];
 #else
   int literals[2];
 #endif
-
-
-
 
   // Supports simple range based for loops over clauses.
 
@@ -171,15 +168,22 @@ struct Clause {
   //
   bool collect () const { return !reason && garbage; }
 
-  void pri_clause() 
-  {
-    std::cout << "Clause literals: ";
-    if (xor_flag) cout << "x ";
+  void pri_clause (string s = "") {
+    if (s == "") std::cout << "Clause literals: ";
+    else std::cout << s << " : ";
+    if (size == 0) {
+      std::cout << "EMPTY by Decide\n";
+      return;
+    }
+    if (xor_flag)
+      cout << "x ";
     for (int i = 0; i < size; ++i) {
-        std::cout << literals[i] << " ";
+      std::cout << literals[i] << " ";
     }
     std::cout << std::endl;
   }
+
+  // const int &At(unsigned i) {return literals[i];}
 };
 
 struct clause_smaller_size {

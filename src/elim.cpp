@@ -270,7 +270,7 @@ bool Internal::resolve_clauses (Eliminator &eliminator, Clause *c,
 
   stats.elimres++;
 
-  if (c->garbage || d->garbage)
+  if (c->garbage || d->garbage || c->xor_flag || d->xor_flag)
     return false;
   if (c->size > d->size) {
     pivot = -pivot;
@@ -492,9 +492,11 @@ bool Internal::elim_resolvents_are_bounded (Eliminator &eliminator,
 
   for (const auto &c : ps) {
     assert (!c->redundant);
+    if (c->xor_flag) return false;
     if (c->garbage)
       continue;
     for (const auto &d : ns) {
+      if (d->xor_flag) return false;
       assert (!d->redundant);
       if (d->garbage)
         continue;
@@ -644,6 +646,8 @@ void Internal::mark_eliminated_clauses_as_garbage (
 
   Occs &ns = occs (-pivot);
   for (const auto &d : ns) {
+    if (d->xor_flag)
+      continue;
     if (d->garbage)
       continue;
     assert (!d->redundant);
@@ -721,7 +725,7 @@ void Internal::try_to_eliminate_variable (Eliminator &eliminator, int pivot,
         mark_eliminated_clauses_as_garbage (eliminator, pivot,
                                             deleted_binary_clause);
       if (active (pivot))
-        mark_eliminated (pivot);
+        mark_eliminated (pivot); //Find : set flag is elim
     } else {
       LOG ("too many resolvents on %d so not eliminated", pivot);
     }
@@ -737,6 +741,8 @@ void Internal::
     mark_redundant_clauses_with_eliminated_variables_as_garbage () {
   for (const auto &c : clauses) {
     if (c->garbage || !c->redundant)
+      continue;
+    if (c->xor_flag)
       continue;
     bool clean = true;
     for (const auto &lit : *c) {
@@ -805,14 +811,24 @@ int Internal::elim_round (bool &completed, bool &deleted_binary_clause) {
     if (c->garbage || c->redundant)
       continue;
     bool satisfied = false, falsified = false;
-    for (const auto &lit : *c) {
-      const signed char tmp = val (lit);
-      if (tmp > 0)
-        satisfied = true;
-      else if (tmp < 0)
-        falsified = true;
-      else
-        assert (active (lit));
+    if (c->xor_flag)
+    {
+      for (const auto &lit : *c) {
+        const signed char tmp = val (lit);
+        if (tmp > 0) satisfied ^= true;
+      }
+    }
+    else
+    {
+      for (const auto &lit : *c) {
+        const signed char tmp = val (lit);
+        if (tmp > 0)
+          satisfied = true;
+        else if (tmp < 0)
+          falsified = true;
+        else
+          assert (active (lit));
+      }
     }
     if (satisfied)
       mark_garbage (c); // forces more precise counts
@@ -821,7 +837,9 @@ int Internal::elim_round (bool &completed, bool &deleted_binary_clause) {
         if (!active (lit))
           continue;
         if (falsified)
+        {
           mark_elim (lit); // simulate unit propagation
+        }
         noccs (lit)++;
       }
     }
@@ -861,7 +879,7 @@ int Internal::elim_round (bool &completed, bool &deleted_binary_clause) {
   // Connect irredundant clauses.
   //
   for (const auto &c : clauses)
-    if (!c->garbage && !c->redundant)
+    if (!c->garbage && !c->redundant && !c->xor_flag)
       for (const auto &lit : *c)
         if (active (lit))
           occs (lit).push_back (c);

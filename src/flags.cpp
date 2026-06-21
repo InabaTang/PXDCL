@@ -32,6 +32,8 @@ void Internal::mark_fixed (int lit) {
 }
 
 void Internal::mark_eliminated (int lit) {
+
+  // printf("eliminated lit : %d\n",lit);
   Flags &f = flags (lit);
   assert (f.status == Flags::ACTIVE);
   f.status = Flags::ELIMINATED;

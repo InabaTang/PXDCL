@@ -492,6 +492,8 @@ bool Internal::decompose_round () {
     Clause *c = clauses[i];
     if (c->garbage)
       continue;
+    if (c->xor_flag)
+      continue;
     int j, size = c->size;
     for (j = 0; j < size; j++) {
       const int lit = c->literals[j];

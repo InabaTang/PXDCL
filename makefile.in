@@ -68,13 +68,13 @@ cadical: cadical.o libcadical.a makefile
 cadical-dynamic: cadical.o libcadical.so makefile
 	$(COMPILE_CPP) -o $@ $< -L. libcadical.so $(LIBS)
 
-mobical: mobical.o libcadical.a makefile $(LIBS)
-	$(COMPILE_CPP) -o $@ $< -L. libcadical.a
+mobical: mobical.o libcadical.a makefile
+	$(COMPILE_CPP) -o $@ $< -L. libcadical.a $(LIBS)
 
 libcadical.a: $(OBJ_SOLVER) $(OBJ_CONTRIB) makefile
 	ar rc $@ $(OBJ_SOLVER) $(OBJ_CONTRIB)
 
-libcadical.so: $(OBJ_SOLVER) $(OBJ_CONTRIB) $(LIBS) makefile
+libcadical.so: $(OBJ_SOLVER) $(OBJ_CONTRIB) makefile
 	$(COMPILE_CPP) -shared -o $@ $(OBJ_SOLVER) $(OBJ_CONTRIB) $(LIBS)
 
 #--------------------------------------------------------------------------#

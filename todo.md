@@ -1,0 +1,2 @@
+1.更改SEGA模式
+2.高斯消元转为inprocessing

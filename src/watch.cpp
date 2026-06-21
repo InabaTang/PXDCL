@@ -6,17 +6,23 @@ void Internal::init_watches () {
   assert (wtab.empty ());
   if (wtab.size () < 2 * vsize)
     wtab.resize (2 * vsize, Watches ());
+  if (xor_tab.size() < 2 * vsize)
+    xor_tab.resize(2 * vsize, Watches());
   LOG ("initialized watcher tables");
 }
 
 void Internal::clear_watches () {
   for (auto lit : lits)
+  {
     watches (lit).clear ();
+    xor_watches (lit).clear();
+  }
 }
 
 void Internal::reset_watches () {
   assert (!wtab.empty ());
   erase_vector (wtab);
+  erase_vector (xor_tab);
   LOG ("reset watcher tables");
 }
 
@@ -48,26 +54,62 @@ void Internal::connect_watches (bool irredundant_only) {
       continue;
     watch_clause (c);
     if (!level) {
-      const int lit0 = c->literals[0];
-      const int lit1 = c->literals[1];
-      const signed char tmp0 = val (lit0);
-      const signed char tmp1 = val (lit1);
-      if (tmp0 > 0)
-        continue;
-      if (tmp1 > 0)
-        continue;
-      if (tmp0 < 0) {
-        const size_t pos0 = var (lit0).trail;
-        if (pos0 < propagated) {
-          propagated = pos0;
-          LOG ("literal %d resets propagated to %zd", lit0, pos0);
+      if (c->xor_flag) {
+        const int lit0 = c->literals[0];
+        const int lit1 = c->literals[1];
+        const signed char tmp0 = val (lit0);
+        const signed char tmp1 = val (lit1);
+        int assigned_count = 0;
+        bool parity = false;
+        for (int i = 0; i < c->size; i++) {
+          int clause_lit = c->literals[i];
+          signed char _val = val(clause_lit);
+          
+          if (_val != 0) {
+            assigned_count++;
+            if (_val < 0) parity = !parity;
+          }
+        }
+        
+        if (assigned_count == c->size - 1) {
+          for (int i = 0; i < c->size; i++) {
+            int clause_lit = c->literals[i];
+            if (!val(clause_lit)) {
+              signed char expected_val = parity ? -1 : 1; 
+              
+              const size_t pos = var(clause_lit).trail;
+              if (pos < propagated) {
+                propagated = pos;
+                LOG ("XOR literal %d resets propagated to %zd", clause_lit, pos);
+              }
+              break;
+            }
+          }
         }
       }
-      if (tmp1 < 0) {
-        const size_t pos1 = var (lit1).trail;
-        if (pos1 < propagated) {
-          propagated = pos1;
-          LOG ("literal %d resets propagated to %zd", lit1, pos1);
+      else
+      {
+        const int lit0 = c->literals[0];
+        const int lit1 = c->literals[1];
+        const signed char tmp0 = val (lit0);
+        const signed char tmp1 = val (lit1);
+        if (tmp0 > 0)
+          continue;
+        if (tmp1 > 0)
+          continue;
+        if (tmp0 < 0) {
+          const size_t pos0 = var (lit0).trail;
+          if (pos0 < propagated) {
+            propagated = pos0;
+            LOG ("literal %d resets propagated to %zd", lit0, pos0);
+          }
+        }
+        if (tmp1 < 0) {
+          const size_t pos1 = var (lit1).trail;
+          if (pos1 < propagated) {
+            propagated = pos1;
+            LOG ("literal %d resets propagated to %zd", lit1, pos1);
+          }
         }
       }
     }

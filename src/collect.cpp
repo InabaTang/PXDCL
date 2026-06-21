@@ -30,6 +30,32 @@ int Internal::clause_contains_fixed_literal (Clause *c) {
     return 0;
 }
 
+int Internal::clause_contains_xor_fixed_literal (Clause *c) {
+  int satisfied = 0, falsified = 0 , zero = 0;
+  for (const auto &lit : *c) {
+    const int tmp = fixed (lit);
+    if (tmp > 0) {
+      satisfied++;
+    }
+    if (tmp < 0) {
+      falsified++;
+    }
+    if (tmp == 0)
+    {
+      zero ++;
+    }
+  }
+  if (!zero)
+  {
+    if (satisfied % 2)
+      return 1;
+    else
+      return -1;
+  }
+  else
+    return 0;
+}
+
 // Assume that the clause is not root level satisfied but contains a literal
 // set to false (root level falsified literal), so it can be shrunken.  The
 // clause data is not actually reallocated at this point to avoid dealing
@@ -38,6 +64,7 @@ int Internal::clause_contains_fixed_literal (Clause *c) {
 // after flushing out root level falsified literals.
 
 void Internal::remove_falsified_literals (Clause *c) {
+  if (c->xor_flag) return ;
   const const_literal_iterator end = c->end ();
   const_literal_iterator i;
   int num_non_false = 0;
@@ -81,11 +108,23 @@ void Internal::mark_satisfied_clauses_as_garbage () {
   for (const auto &c : clauses) {
     if (c->garbage)
       continue;
-    const int tmp = clause_contains_fixed_literal (c);
-    if (tmp > 0)
-      mark_garbage (c);
-    else if (tmp < 0)
-      remove_falsified_literals (c);
+    if (c->xor_flag)
+    {
+      const int tmp = clause_contains_xor_fixed_literal(c);
+      if (tmp > 0)
+        mark_garbage (c);
+      else if (tmp < 0)
+        remove_falsified_literals (c);
+      continue;
+    }
+    else
+    {
+      const int tmp = clause_contains_fixed_literal (c);
+      if (tmp > 0)
+        mark_garbage (c);
+      else if (tmp < 0)
+        remove_falsified_literals (c);
+    }
   }
 }
 
@@ -146,12 +185,13 @@ void Internal::unprotect_reasons () {
     Var &v = var (lit);
     assert (v.level > 0);
     Clause *reason = v.reason;
-    if (!reason)
+    if (!reason or reason->size == 0)
       continue;
     if (reason == external_reason)
       continue;
     LOG (reason, "unprotecting assigned %d reason %p", lit,
          (void *) reason);
+    //printf("why reason is : "); reason->pri_clause(); 
     assert (reason->reason);
     reason->reason = false;
 #ifdef LOGGING
@@ -204,6 +244,7 @@ inline void Internal::flush_watches (int lit, Watches &saved) {
   for (i = j; i != end; i++) {
     Watch w = *i;
     Clause *c = w.clause;
+    assert(!w.IsXor());
     if (c->collect ())
       continue;
     if (c->moved)
@@ -225,6 +266,38 @@ inline void Internal::flush_watches (int lit, Watches &saved) {
   shrink_vector (ws);
 }
 
+inline void Internal::flush_xor_watches (int lit, Watches &saved)
+{
+  assert (saved.empty ());
+  Watches &xws = xor_watches (lit);
+  const const_watch_iterator end = xws.end ();
+  watch_iterator j = xws.begin ();
+  const_watch_iterator i;
+  for (i = j; i != end; i++) {
+    Watch w = *i;
+    Clause *c = w.clause;
+    assert(w.IsXor());
+    if (c->collect ())
+      continue;
+    if (c->moved)
+      c = w.clause = c->copy;
+    w.size = c->size;
+    const int new_blit_pos = (c->literals[0] == lit);
+    LOG (c, "clause in flush_watch starting from %d", lit);
+    // assert (c->literals[!new_blit_pos] == lit); /*FW1*/
+    w.blit = c->literals[new_blit_pos];
+    if (w.binary ())
+      *j++ = w;
+    else
+      saved.push_back (w);
+  }
+  xws.resize (j - xws.begin ());
+  for (const auto &w : saved)
+    xws.push_back (w);
+  saved.clear ();
+  shrink_vector (xws);
+}
+
 void Internal::flush_all_occs_and_watches () {
   if (occurring ())
     for (auto idx : vars)
@@ -233,7 +306,10 @@ void Internal::flush_all_occs_and_watches () {
   if (watching ()) {
     Watches tmp;
     for (auto idx : vars)
+    {
       flush_watches (idx, tmp), flush_watches (-idx, tmp);
+      flush_xor_watches(idx, tmp);
+    }
   }
 }
 
@@ -329,10 +405,12 @@ void Internal::copy_non_garbage_clauses () {
   // First determine 'moved_bytes' and 'collected_bytes'.
   //
   for (const auto &c : clauses)
-    if (!c->collect ())
+  {
+    if (!c->collect ()) // !reason and garbage
       moved_bytes += c->bytes (), moved_clauses++;
     else
       collected_bytes += c->bytes (), collected_clauses++;
+  }
 
   PHASE ("collect", stats.collections,
          "moving %zd bytes %.0f%% of %zd non garbage clauses", moved_bytes,
@@ -382,6 +460,17 @@ void Internal::copy_non_garbage_clauses () {
           if (!w.clause->moved && !w.clause->collect ())
             copy_clause (w.clause);
 
+    for (int sign = -1; sign <= 1 ; sign += 2)
+    {
+      for (auto idx : vars)
+      {
+        for (const auto &w : xor_watches(sign))
+        {
+          if (!w.clause->moved && !w.clause->collect ())
+            copy_clause (w.clause);
+        }
+      }
+    }
   } else {
 
     // Localize according to decision queue order.
@@ -395,6 +484,12 @@ void Internal::copy_non_garbage_clauses () {
     for (int sign = -1; sign <= 1; sign += 2)
       for (int idx = queue.last; idx; idx = link (idx).prev)
         for (const auto &w : watches (sign * likely_phase (idx)))
+          if (!w.clause->moved && !w.clause->collect ())
+            copy_clause (w.clause);
+
+    for (int sign = -1; sign <= 1; sign += 2)
+      for (int idx = queue.last; idx; idx = link (idx).prev)
+        for (const auto &w : xor_watches(sign))
           if (!w.clause->moved && !w.clause->collect ())
             copy_clause (w.clause);
   }
@@ -451,7 +546,7 @@ void Internal::check_clause_stats () {
   for (const auto &c : clauses) {
     if (c->garbage)
       continue;
-    if (c->redundant)
+    if (c->redundant && !c->xor_flag)
       redundant++;
     else
       irredundant++;
@@ -490,6 +585,7 @@ void Internal::remove_garbage_binaries () {
         Watch w = *i;
         *j++ = w;
         Clause *c = w.clause;
+        assert(!c->xor_flag);
         COVER (!w.binary () && c->size == 2);
         if (!w.binary ())
           continue;

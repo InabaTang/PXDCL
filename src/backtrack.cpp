@@ -77,12 +77,17 @@ void Internal::update_target_and_best () {
 /*------------------------------------------------------------------------*/
 
 void Internal::backtrack (int new_level) {
+
+  //printf("backtrack start\n");
+  //printf("new_level = %d , level = %d\n",new_level,level);
   assert (new_level <= level);
   if (new_level == level)
     return;
 
   update_target_and_best ();
   backtrack_without_updating_phases (new_level);
+
+  //printf("backtrack end\n");
 }
 
 void Internal::backtrack_without_updating_phases (int new_level) {
@@ -121,7 +126,7 @@ void Internal::backtrack_without_updating_phases (int new_level) {
     int lit = trail[i++];
     Var &v = var (lit);
     if (v.level > new_level) {
-      unassign (lit);
+      unassign(lit);
 #ifdef LOGGING
       unassigned++;
 #endif
@@ -170,6 +175,12 @@ void Internal::backtrack_without_updating_phases (int new_level) {
     if (!val (changed_val)) {
       changed_val = 0;
     }
+  }
+
+  if (opts.unionset)
+  {
+    _eqvRelationSize = _lv2EqvRelation[level];
+    _xorUnion->BackJump(new_level);
   }
   assert (num_assigned == trail.size ());
 }

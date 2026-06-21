@@ -274,6 +274,7 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) { //Find :
     if (ch == 'x')
     {
       solver->internal->xor_clause_flag = true;
+      solver->internal->xor_clause_number ++;
       continue;
     }
 

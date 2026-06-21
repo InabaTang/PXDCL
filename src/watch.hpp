@@ -50,9 +50,13 @@ struct Watch {
 };
 
 typedef vector<Watch> Watches; // of one literal
+typedef vector<Watch> XorWatches; // for xor clause
 
 typedef Watches::iterator watch_iterator;
 typedef Watches::const_iterator const_watch_iterator;
+
+typedef XorWatches::iterator xor_watch_iterator;
+typedef XorWatches::const_iterator const_xor_watch_iterator;
 
 inline void remove_watch (Watches &ws, Clause *clause) {
   const auto end = ws.end ();

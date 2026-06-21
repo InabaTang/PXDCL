@@ -183,7 +183,13 @@ int Internal::likely_phase (int idx) { return decide_phase (idx, false); }
 
 // adds new level to control and trail
 //
-void Internal::new_trail_level (int lit) {
+void Internal::new_trail_level (int lit) { //Find : level ++
+  if (opts.unionset)
+  {
+    _lv2Trail[level] = trail.size();
+    _lv2EqvRelation[level]   = _eqvRelationSize;
+    _xorUnion->ExtendLevel();
+  }
   level++;
   control.push_back (Level (lit, trail.size ()));
 }
@@ -191,6 +197,7 @@ void Internal::new_trail_level (int lit) {
 /*------------------------------------------------------------------------*/
 
 bool Internal::satisfied () {
+  // printf("satisfied is run\n");
   if ((size_t) level < assumptions.size () + (!!constraint.size ()))
     return false;
   if (num_assigned < (size_t) max_var)
@@ -215,130 +222,140 @@ bool Internal::better_decision (int lit, int other) {
 // that not all variables are assigned.
 
 int Internal::decide () {
+
   assert (!satisfied ());
   START (decide);
   int res = 0;
-  if ((size_t) level < assumptions.size ()) {
-    const int lit = assumptions[level];
-    assert (assumed (lit));
-    const signed char tmp = val (lit);
-    if (tmp < 0) {
-      LOG ("assumption %d falsified", lit);
-      res = 20;
-    } else if (tmp > 0) {
-      LOG ("assumption %d already satisfied", lit);
-      new_trail_level (0);
-      LOG ("added pseudo decision level");
-      notify_decision ();
-    } else {
-      LOG ("deciding assumption %d", lit);
-      search_assume_decision (lit);
-    }
-  } else if ((size_t) level == assumptions.size () && constraint.size ()) {
-
-    int satisfied_lit = 0;  // The literal satisfying the constrain.
-    int unassigned_lit = 0; // Highest score unassigned literal.
-    int previous_lit = 0;   // Move satisfied literals to the front.
-
-    const size_t size_constraint = constraint.size ();
-
-#ifndef NDEBUG
-    unsigned sum = 0;
-    for (auto lit : constraint)
-      sum += lit;
-#endif
-    for (size_t i = 0; i != size_constraint; i++) {
-
-      // Get literal and move 'constraint[i] = constraint[i-1]'.
-
-      int lit = constraint[i];
-      constraint[i] = previous_lit;
-      previous_lit = lit;
-
+  // if (need_xor_decision()) //for xor decise
+  // {
+  //   //printf("xor_decide is run\n");
+  //   int decide_lit = handle_xor_decision();
+  //   search_assume_decision (decide_lit);
+  // }
+  // else
+  // {
+    if ((size_t) level < assumptions.size ()) {
+      const int lit = assumptions[level];
+      assert (assumed (lit));
       const signed char tmp = val (lit);
       if (tmp < 0) {
-        LOG ("constraint literal %d falsified", lit);
-        continue;
+        LOG ("assumption %d falsified", lit);
+        res = 20;
+      } else if (tmp > 0) {
+        LOG ("assumption %d already satisfied", lit);
+        new_trail_level (0);
+        LOG ("added pseudo decision level");
+        notify_decision ();
+      } else {
+        LOG ("deciding assumption %d", lit);
+        search_assume_decision (lit);
+      }
+    } else if ((size_t) level == assumptions.size () && constraint.size ()) {
+
+      int satisfied_lit = 0;  // The literal satisfying the constrain.
+      int unassigned_lit = 0; // Highest score unassigned literal.
+      int previous_lit = 0;   // Move satisfied literals to the front.
+
+      const size_t size_constraint = constraint.size ();
+
+  #ifndef NDEBUG
+      unsigned sum = 0;
+      for (auto lit : constraint)
+        sum += lit;
+  #endif
+      for (size_t i = 0; i != size_constraint; i++) {
+
+        // Get literal and move 'constraint[i] = constraint[i-1]'.
+
+        int lit = constraint[i];
+        constraint[i] = previous_lit;
+        previous_lit = lit;
+
+        const signed char tmp = val (lit);
+        if (tmp < 0) {
+          LOG ("constraint literal %d falsified", lit);
+          continue;
+        }
+
+        if (tmp > 0) {
+          LOG ("constraint literal %d satisfied", lit);
+          satisfied_lit = lit;
+          break;
+        }
+
+        assert (!tmp);
+        LOG ("constraint literal %d unassigned", lit);
+
+        if (!unassigned_lit || better_decision (lit, unassigned_lit))
+          unassigned_lit = lit;
       }
 
-      if (tmp > 0) {
-        LOG ("constraint literal %d satisfied", lit);
-        satisfied_lit = lit;
-        break;
-      }
+      if (satisfied_lit) {
 
-      assert (!tmp);
-      LOG ("constraint literal %d unassigned", lit);
+        constraint[0] = satisfied_lit; // Move satisfied to the front.
 
-      if (!unassigned_lit || better_decision (lit, unassigned_lit))
-        unassigned_lit = lit;
-    }
+        LOG ("literal %d satisfies constraint and "
+            "is implied by assumptions",
+            satisfied_lit);
 
-    if (satisfied_lit) {
-
-      constraint[0] = satisfied_lit; // Move satisfied to the front.
-
-      LOG ("literal %d satisfies constraint and "
-           "is implied by assumptions",
-           satisfied_lit);
-
-      new_trail_level (0);
-      LOG ("added pseudo decision level for constraint");
-      notify_decision ();
-
-    } else {
-
-      // Just move all the literals back.  If we found an unsatisfied
-      // literal then it will be satisfied (most likely) at the next
-      // decision and moved then to the first position.
-
-      if (size_constraint) {
-
-        for (size_t i = 0; i + 1 != size_constraint; i++)
-          constraint[i] = constraint[i + 1];
-
-        constraint[size_constraint - 1] = previous_lit;
-      }
-
-      if (unassigned_lit) {
-
-        LOG ("deciding %d to satisfy constraint", unassigned_lit);
-        search_assume_decision (unassigned_lit);
+        new_trail_level (0);
+        LOG ("added pseudo decision level for constraint");
+        notify_decision ();
 
       } else {
 
-        LOG ("failing constraint");
-        unsat_constraint = true;
-        res = 20;
+        // Just move all the literals back.  If we found an unsatisfied
+        // literal then it will be satisfied (most likely) at the next
+        // decision and moved then to the first position.
+
+        if (size_constraint) {
+
+          for (size_t i = 0; i + 1 != size_constraint; i++)
+            constraint[i] = constraint[i + 1];
+
+          constraint[size_constraint - 1] = previous_lit;
+        }
+
+        if (unassigned_lit) {
+
+          LOG ("deciding %d to satisfy constraint", unassigned_lit);
+          search_assume_decision (unassigned_lit);
+
+        } else {
+
+          LOG ("failing constraint");
+          unsat_constraint = true;
+          res = 20;
+        }
       }
-    }
 
-#ifndef NDEBUG
-    for (auto lit : constraint)
-      sum -= lit;
-    assert (!sum); // Checksum of literal should not change!
-#endif
+  #ifndef NDEBUG
+      for (auto lit : constraint)
+        sum -= lit;
+      assert (!sum); // Checksum of literal should not change!
+  #endif
 
-  } else {
-
-    int decision = ask_decision ();
-    if ((size_t) level < assumptions.size () ||
-        ((size_t) level == assumptions.size () && constraint.size ())) {
-      // Forced backtrack below pseudo decision levels.
-      // So one of the two branches above will handle it.
-      STOP (decide);
-      res = decide (); // STARTS and STOPS profiling
-      START (decide);
     } else {
-      stats.decisions++;
-      if (!decision) {
-        int idx = next_decision_variable ();
-        const bool target = (opts.target > 1 || (stable && opts.target));
-        decision = decide_phase (idx, target);
+
+      int decision = ask_decision ();
+      if ((size_t) level < assumptions.size () ||
+          ((size_t) level == assumptions.size () && constraint.size ())) {
+        // Forced backtrack below pseudo decision levels.
+        // So one of the two branches above will handle it.
+        STOP (decide);
+        res = decide (); // STARTS and STOPS profiling
+        START (decide);
+      } else {
+        stats.decisions++;
+        if (!decision) {
+          int idx = next_decision_variable ();
+          const bool target = (opts.target > 1 || (stable && opts.target));
+          decision = decide_phase (idx, target);
+        }
+        search_assume_decision (decision);
       }
-      search_assume_decision (decision);
     }
-  }
+ // }
   if (res)
     marked_failed = false;
   STOP (decide);

@@ -111,6 +111,8 @@ Clause *Internal::new_clause (bool red, int glue) {
   if (xor_clause_flag) c->xor_flag = true;
   else c->xor_flag = false;
 
+  c->xor_conflict_flag = false;
+
   c->glue = glue;
   c->size = size;
   c->pos = 2;
@@ -139,6 +141,7 @@ Clause *Internal::new_clause (bool red, int glue) {
   }
 
   clauses.push_back (c);
+  if (xor_clause_flag) xor_clauses.push_back(c);
   clause_delete.release ();
   LOG (c, "new pointer %p", (void *) c);
 
@@ -303,6 +306,7 @@ void Internal::delete_clause (Clause *c) {
 void Internal::mark_garbage (Clause *c) {
 
   assert (!c->garbage);
+  //if (c->xor_flag) printf("mark garbage xor clause \n");
 
   // Delay tracing deletion of binary clauses.  See the discussion above in
   // 'delete_clause' and also in 'propagate'.
@@ -346,7 +350,7 @@ void Internal::mark_garbage (Clause *c) {
 // Almost the same function as 'search_assign' except that we do not pretend
 // to learn a new unit clause (which was confusing in log files).
 
-void Internal::assign_original_unit (int64_t id, int lit) {
+void Internal::assign_original_unit (int64_t id, int lit) { //Find : ori_unit
   assert (!level || opts.chrono);
   assert (!unsat);
   const int idx = vidx (lit);
@@ -445,9 +449,28 @@ void Internal::add_new_original_clause (int64_t id) {
     }
     else
     {
-      for (const auto &lit : original)
-      {
-        clause.push_back (lit);
+      for (const auto &lit : original) {
+        clause.push_back(lit);
+        int tmp = fixed(lit);
+        if (tmp < 0) {
+          LOG("falsified literal %d in XOR clause", lit);
+          if (lrat) {
+            int elit = externalize(lit);
+            unsigned eidx = (elit > 0) + 2u * (unsigned) abs(elit);
+            if (!external->ext_units[eidx]) {
+              int64_t uid = unit_id(-lit);
+              lrat_chain.push_back(uid);
+            }
+          }
+        } else if (tmp > 0) {
+          LOG("satisfied literal %d in XOR clause", lit);
+        } else {
+          tmp = val(lit);
+          if (tmp)
+            learned_levels.insert(var(lit).level);
+          else
+            unassigned++;
+        }
       }
     }
   }
@@ -538,23 +561,31 @@ void Internal::add_new_original_clause (int64_t id) {
     } else {
       move_literals_to_watch ();
 #ifndef NDEBUG
-      check_watched_literal_invariants ();
+      if (!xor_clause_flag) check_watched_literal_invariants ();
 #endif
+      //Find : Add clause lit
       int glue = (int) (learned_levels.size () + unassigned);
       //if (xor_clause_flag) printf("??? glue : %d\n",glue);
       assert (glue <= (int) clause.size ());
       bool clause_redundancy = from_propagator && ext_clause_forgettable;
-      Clause *c = new_clause (clause_redundancy, glue);
-      if (xor_clause_flag) printf("add new learned clause : %ld\n",new_id);
+      Clause *c = new_clause (clause_redundancy, glue); //Find : new clause
+      //if (xor_clause_flag) printf("add new learned clause : %ld\n",new_id);
       c->id = new_id;
       if (xor_clause_flag)
       {
-        c->xor_flag = true;
         xor_clause_flag = false;
       }
       clause_id--;
 
       //if (xor_clause_flag) printf("!!!\n");
+      if (opts.unionset)
+      {
+        if (c->xor_flag && c->size <= 3)
+        {
+          AddXorGate(c);
+        }
+      }
+
       watch_clause (c);
       clause.clear ();
       original.clear ();

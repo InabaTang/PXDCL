@@ -273,6 +273,8 @@ inline void Internal::analyze_literal (int lit, int &open,
 
   // before marking as seen, get reason and check for missed unit
 
+  //printf("v.level = %d , level = %d , lit = %d\n",v.level,level,lit);
+
   assert (val (lit) < 0);
   assert (v.level <= level);
   if (v.reason == external_reason) {
@@ -321,9 +323,50 @@ inline void Internal::analyze_reason (int lit, Clause *reason, int &open,
   bump_clause (reason);
   if (lrat)
     lrat_chain.push_back (reason->id);
-  for (const auto &other : *reason)
-    if (other != lit)
-      analyze_literal (other, open, resolvent_size, antecedent_size);
+  //printf("lits is : %d ",lit); pri_val_clause(reason);
+  if (reason -> xor_flag)
+  {
+    bool left = false;
+    for (auto &other : *reason)
+    {
+      if (val(other) > 0)
+      {
+        other = -other;
+        left ^= true;
+      }
+    }
+    if (left)
+    {
+      for (auto &other : *reason)
+      {
+        if (abs(other) == abs(lit))
+        {
+          assert(val(other) < 0);
+          other = -other;
+          left ^= true;
+        }
+      }
+    }
+    //printf("xiugaihou is : %d ",lit); pri_val_clause(reason);
+    assert(!left);
+    for (const auto &other : *reason)
+      if (abs(other) != abs(lit))
+      {
+        // int k = other;
+        // if (val(k) > 0) k = -k;
+        // assert(val(k) != 0);
+        // assert(val(other) < 0);
+        analyze_literal (other, open, resolvent_size, antecedent_size);
+      }
+  }
+  else
+  {
+    //printf("??? lit = %d\n");
+    for (const auto &other : *reason)
+      if (other != lit)
+        analyze_literal (other, open, resolvent_size, antecedent_size);
+  }
+  //printf("why? open is %d\n",open);
 }
 
 /*------------------------------------------------------------------------*/
@@ -530,6 +573,13 @@ Clause *Internal::new_driving_clause (const int glue, int &jump) {
     MSORT (opts.radixsortlim, clause.begin (), clause.end (),
            analyze_trail_negative_rank (this), analyze_trail_larger (this));
 
+
+    // cout << "Analyzed clause : ";
+    // for (int i = 0 ; i < clause.size() ; i ++)
+    // {
+    //   cout << clause[i] << ":" << var(clause[i]).level << " ";
+    // }
+    // cout << endl;
     jump = var (clause[1]).level;
     res = new_learned_redundant_clause (glue);
     res->used = max_used;
@@ -578,6 +628,7 @@ inline int Internal::find_conflict_level (int &forced) {
 
   forced = 0;
 
+  //printf("into back 2 conflict is :"); if (conflict) pri_val_clause(conflict);
   for (const auto &lit : *conflict) {
     const int tmp = var (lit).level;
     if (tmp > res) {
@@ -592,6 +643,7 @@ inline int Internal::find_conflict_level (int &forced) {
   }
 
   LOG ("%d literals on actual conflict level %d", count, res);
+  // printf ("%d literals on actual conflict level %d", count, res);
 
   const int size = conflict->size;
   int *lits = conflict->literals;
@@ -625,14 +677,32 @@ inline int Internal::find_conflict_level (int &forced) {
 
     if (highest_position > 1) {
       LOG (conflict, "unwatch %d in", lit);
-      remove_watch (watches (lit), conflict);
+      if (conflict->xor_conflict_flag)
+      {
+        //do nothing
+      }
+      else if (conflict->xor_flag) {
+        remove_watch (xor_watches (lit), conflict);
+      } else {
+        remove_watch (watches (lit), conflict);
+      }
     }
 
     lits[highest_position] = lit;
     lits[i] = highest_literal;
 
     if (highest_position > 1)
-      watch_literal (highest_literal, lits[!i], conflict);
+    {
+      if (conflict->xor_conflict_flag)
+      {
+        //do nothing
+      }
+      else if (conflict->xor_flag) {
+        watch_xor_literal (highest_literal, lits[!i], conflict);
+      } else {
+        watch_literal (highest_literal, lits[!i], conflict);
+      }
+    }
   }
 
   // Only if the number of highest level literals in the conflict is one
@@ -778,8 +848,17 @@ Clause *Internal::on_the_fly_strengthen (Clause *new_conflict, int uip) {
 
   int *lits = new_conflict->literals;
 
-  assert (lits[0] == uip || lits[1] == uip);
-  const int other_init = lits[0] ^ lits[1] ^ uip;
+  assert (abs(lits[0]) == abs(uip) || abs(lits[1]) == abs(uip));
+
+  int other_init;
+  if (abs(lits[0]) == abs(uip))
+  {
+    other_init = lits[1];
+  }
+  else
+  {
+    other_init = lits[0];
+  }
 
   assert (mini_chain.empty ());
 
@@ -794,15 +873,27 @@ Clause *Internal::on_the_fly_strengthen (Clause *new_conflict, int uip) {
 
   LOG (new_conflict, "removing all units in");
 
-  assert (lits[0] == uip || lits[1] == uip);
-  const int other = lits[0] ^ lits[1] ^ uip;
+  assert (abs(lits[0]) == abs(uip) || abs(lits[1]) == abs(uip));
+  int other;
+  if (abs(lits[0]) == abs(uip))
+  {
+    other = lits[1];
+  }
+  else
+  {
+    other = lits[0];
+  }
   lits[0] = other;
   lits[1] = lits[--new_size];
   LOG (new_conflict, "putting uip at pos 1");
 
   if (other_init != other)
-    remove_watch (watches (other_init), new_conflict);
-  remove_watch (watches (uip), new_conflict);
+  {
+    if (new_conflict->xor_flag) remove_watch (xor_watches (other_init), new_conflict);
+    else remove_watch (watches (other_init), new_conflict);
+  }
+  if (new_conflict->xor_flag) (xor_watches (uip), new_conflict);
+  else remove_watch (watches (uip), new_conflict);
 
   assert (!lrat || lrat_chain.back () == new_conflict->id);
   if (lrat) {
@@ -937,255 +1028,355 @@ void Internal::update_decision_rate_average () {
 // chronological backtracking (see discussion above) the algorithm becomes
 // slightly more involved.
 
-void Internal::analyze () {
+void Internal::analyze () { //Find : analyze
 
   START (analyze);
+  int uip = 0;
+  if (!conflict)
+  {
+    // clause.clear();
+    // vector<int> confilct_vector = _xorUnion->_bigEqvReason;
+    // //int max_level = -1 , max_level_id = 0;
+    // for (int i = 0 ; i < confilct_vector.size() ; i++)
+    // {
+    //   if (i == 0) clause.push_back(-confilct_vector[i]);
+    //   else clause.push_back(confilct_vector[i]);
+    //   // if (var(confilct_vector[i]).level > max_level)
+    //   // {
+    //   //   max_level = var(confilct_vector[i]).level;
+    //   //   max_level_id = i;
+    //   // }
+    // }
+    // //std::swap(confilct_vector[1], confilct_vector[max_level_id]);
+    // uip = -clause[0];
 
-  assert (conflict);
-  assert (lrat_chain.empty ());
-  assert (unit_chain.empty ());
-  assert (unit_analyzed.empty ());
-  assert (clause.empty ());
-
-  // First update moving averages of trail height at conflict.
-  //
-  UPDATE_AVERAGE (averages.current.trail.fast, num_assigned);
-  UPDATE_AVERAGE (averages.current.trail.slow, num_assigned);
-  update_decision_rate_average ();
-
-  /*----------------------------------------------------------------------*/
-
-  if (external_prop && !external_prop_is_lazy && opts.exteagerreasons) {
-    explain_external_propagations ();
+    // // cout << "Union clause : ";
+    // // for (int i = 0 ; i < clause.size() ; i ++)
+    // // {
+    // //   cout << clause[i] << ":" << var(clause[i]).level << " ";
+    // // }
+    // // cout << endl;
   }
+  else
+  {
 
-  if (opts.chrono || external_prop) {
+    assert (conflict);
+    assert (lrat_chain.empty ());
+    assert (unit_chain.empty ());
+    assert (unit_analyzed.empty ());
+    assert (clause.empty ());
 
-    int forced;
+    //printf("do analyze\n");
 
-    const int conflict_level = find_conflict_level (forced);
+    // First update moving averages of trail height at conflict.
+    //
+    UPDATE_AVERAGE (averages.current.trail.fast, num_assigned);
+    UPDATE_AVERAGE (averages.current.trail.slow, num_assigned);
+    update_decision_rate_average ();
 
-    // In principle we can perform conflict analysis as in non-chronological
-    // backtracking except if there is only one literal with the maximum
-    // assignment level in the clause.  Then standard conflict analysis is
-    // unnecessary and we can use the conflict as a driving clause.  In the
-    // pseudo code of the SAT'18 paper on chronological backtracking this
-    // corresponds to the situation handled in line 4-6 in Alg. 1, except
-    // that the pseudo code in the paper only backtracks while we eagerly
-    // assign the single literal on the highest decision level.
+    /*----------------------------------------------------------------------*/
 
-    if (forced) {
-
-      assert (forced);
-      assert (conflict_level > 0);
-      LOG ("single highest level literal %d", forced);
-
-      // The pseudo code in the SAT'18 paper actually backtracks to the
-      // 'second highest decision' level, while their code backtracks
-      // to 'conflict_level-1', which is more in the spirit of chronological
-      // backtracking anyhow and thus we also do the latter.
-      //
-      backtrack (conflict_level - 1);
-
-      // if we are on decision level 0 search assign will learn unit
-      // so we need a valid chain here (of course if we are not on decision
-      // level 0 this will not result in a valid chain).
-      // we can just use build_chain_for_units in propagate
-      //
-      build_chain_for_units (forced, conflict, 0);
-
-      LOG ("forcing %d", forced);
-      search_assign_driving (forced, conflict);
-
-      conflict = 0;
-      if (!opts.chrono)
-        did_external_prop = true;
-      STOP (analyze);
-      return;
+    if (external_prop && !external_prop_is_lazy && opts.exteagerreasons) {
+      explain_external_propagations ();
     }
 
-    // Backtracking to the conflict level is in the pseudo code in the
-    // SAT'18 chronological backtracking paper, but not in their actual
-    // implementation.  In principle we do not need to backtrack here.
-    // However, as a side effect of backtracking to the conflict level we
-    // set 'level' to the conflict level which then allows us to reuse the
-    // old 'analyze' code as is.  The alternative (which we also tried but
-    // then abandoned) is to use 'conflict_level' instead of 'level' in the
-    // analysis, which however requires to pass it to the 'analyze_reason'
-    // and 'analyze_literal' functions.
-    //
-    backtrack (conflict_level);
-  }
+    // printf("before is : "); pri_val_clause(conflict);
 
-  // Actual conflict on root level, thus formula unsatisfiable.
-  //
-  if (!level) {
-    learn_empty_clause ();
-    if (external->learner)
-      external->export_learned_empty_clause ();
-    STOP (analyze);
-    return;
-  }
+    if (opts.chrono || external_prop) {
 
-  /*----------------------------------------------------------------------*/
+      int forced;
 
-  // First derive the 1st UIP clause by going over literals assigned on the
-  // current decision level.  Literals in the conflict are marked as 'seen'
-  // as well as all literals in reason clauses of already 'seen' literals on
-  // the current decision level.  Thus the outer loop starts with the
-  // conflict clause as 'reason' and then uses the 'reason' of the next
-  // seen literal on the trail assigned on the current decision level.
-  // During this process maintain the number 'open' of seen literals on the
-  // current decision level with not yet processed 'reason'.  As soon 'open'
-  // drops to one, we have found the first unique implication point.  This
-  // is sound because the topological order in which literals are processed
-  // follows the assignment order and a more complex algorithm to find
-  // articulation points is not necessary.
-  //
-  Clause *reason = conflict;
-  LOG (reason, "analyzing conflict");
+      const int conflict_level = find_conflict_level (forced);
 
-  assert (clause.empty ());
-  assert (lrat_chain.empty ());
+      // In principle we can perform conflict analysis as in non-chronological
+      // backtracking except if there is only one literal with the maximum
+      // assignment level in the clause.  Then standard conflict analysis is
+      // unnecessary and we can use the conflict as a driving clause.  In the
+      // pseudo code of the SAT'18 paper on chronological backtracking this
+      // corresponds to the situation handled in line 4-6 in Alg. 1, except
+      // that the pseudo code in the paper only backtracks while we eagerly
+      // assign the single literal on the highest decision level.
 
-  const auto &t = &trail;
-  int i = t->size ();      // Start at end-of-trail.
-  int open = 0;            // Seen but not processed on this level.
-  int uip = 0;             // The first UIP literal.
-  int resolvent_size = 0;  // without the uip
-  int antecedent_size = 1; // with the uip and without unit literals
-  int conflict_size = 0;   // without the uip and without unit literals
-  int resolved = 0;        // number of resolution (0 = clause in CNF)
-  const bool otfs = opts.otfs;
+      if (forced) {
 
-  for (;;) {
-    antecedent_size = 1; // for uip
-    analyze_reason (uip, reason, open, resolvent_size, antecedent_size);
-    if (resolved == 0)
-      conflict_size = antecedent_size - 1;
-    assert (resolvent_size == open + (int) clause.size ());
+        assert (forced);
+        assert (conflict_level > 0);
+        LOG ("single highest level literal %d", forced);
 
-    if (otfs && resolved > 0 && antecedent_size > 2 &&
-        resolvent_size < antecedent_size) {
-      assert (reason != conflict);
-      LOG (analyzed, "found candidate for OTFS conflict");
-      LOG (clause, "found candidate for OTFS conflict");
-      LOG (reason, "found candidate (size %d) for OTFS resolvent",
-           antecedent_size);
-      const int other = reason->literals[0] ^ reason->literals[1] ^ uip;
-      assert (other != uip);
-      reason = on_the_fly_strengthen (reason, uip);
-      if (opts.bump)
-        bump_variables ();
+        // The pseudo code in the SAT'18 paper actually backtracks to the
+        // 'second highest decision' level, while their code backtracks
+        // to 'conflict_level-1', which is more in the spirit of chronological
+        // backtracking anyhow and thus we also do the latter.
+        //
+        //printf("backtracking 1\n");
+        backtrack (conflict_level - 1);
 
-      assert (conflict_size);
-      if (!reason) {
-        uip = -other;
-        assert (open == 1);
-        LOG ("clause is actually unit %d, stopping", -uip);
-        reverse (begin (mini_chain), end (mini_chain));
-        for (auto id : mini_chain)
-          lrat_chain.push_back (id);
-        mini_chain.clear ();
-        clear_analyzed_levels ();
-        assert (!opts.exteagerreasons);
-        clause.clear ();
-        break;
-      }
-      assert (conflict_size >= 2);
-
-      if (resolved == 1 && resolvent_size < conflict_size) {
-        // here both clauses are part of the CNF, so one subsumes the other
-        otfs_subsume_clause (reason, conflict);
-        LOG (reason, "changing conflict to");
-        --conflict_size;
-        assert (conflict_size == reason->size);
-        ++stats.otfs.subsumed;
-        ++stats.subsumed;
-      }
-
-      LOG (reason, "changing conflict to");
-      conflict = reason;
-      if (open == 1) {
-        int forced = 0;
-        const int conflict_level = otfs_find_backtrack_level (forced);
-        int new_level = determine_actual_backtrack_level (conflict_level);
-        UPDATE_AVERAGE (averages.current.level, new_level);
-        backtrack (new_level);
+        // if we are on decision level 0 search assign will learn unit
+        // so we need a valid chain here (of course if we are not on decision
+        // level 0 this will not result in a valid chain).
+        // we can just use build_chain_for_units in propagate
+        //
+        build_chain_for_units (forced, conflict, 0);
 
         LOG ("forcing %d", forced);
-        search_assign_driving (forced, conflict);
+        // printf("forcing is %d , after is : ",forced); pri_val_clause(conflict);
+        if (conflict && conflict->xor_flag)
+        {
+          bool assigned = false;
+          for (auto c_lit : *conflict)
+          {
+            int vc = val(c_lit);
+            if (vc > 0) assigned ^= true;
+            else if (c_lit == forced) assigned ^= true;
+            else if (c_lit == -forced) assigned ^= false;
+          }
+          if (assigned) search_assign_driving (forced, conflict);
+          else search_assign_driving (-forced, conflict);
+        }
+        else search_assign_driving (forced, conflict);
 
-        // Clean up.
-        //
         conflict = 0;
-        clear_analyzed_literals ();
-        clear_analyzed_levels ();
-        clause.clear ();
+        if (!opts.chrono)
+          did_external_prop = true;
         STOP (analyze);
         return;
       }
 
-      stats.conflicts++;
-
-      clear_analyzed_literals ();
-      clear_analyzed_levels ();
-      clause.clear ();
-      resolvent_size = 0;
-      antecedent_size = 1;
-      resolved = 0;
-      open = 0;
-      analyze_reason (0, reason, open, resolvent_size, antecedent_size);
-      conflict_size = antecedent_size - 1;
-      assert (open > 1);
+      // Backtracking to the conflict level is in the pseudo code in the
+      // SAT'18 chronological backtracking paper, but not in their actual
+      // implementation.  In principle we do not need to backtrack here.
+      // However, as a side effect of backtracking to the conflict level we
+      // set 'level' to the conflict level which then allows us to reuse the
+      // old 'analyze' code as is.  The alternative (which we also tried but
+      // then abandoned) is to use 'conflict_level' instead of 'level' in the
+      // analysis, which however requires to pass it to the 'analyze_reason'
+      // and 'analyze_literal' functions.
+      //
+      //printf("backtracking 2\n");
+      backtrack (conflict_level);
     }
 
-    ++resolved;
+    // Actual conflict on root level, thus formula unsatisfiable.
+    //
+    if (!level) {
+      learn_empty_clause ();
+      if (external->learner)
+        external->export_learned_empty_clause ();
+      STOP (analyze);
+      return;
+    }
 
-    uip = 0;
-    while (!uip) {
-      if (!i) {
-        lazy_external_propagator_out_of_order_clause (uip);
-        if (unsat)
-          return;
-        else if (uip) {
-          open = 1;
-          break;
-        } else {
-          LOG (reason, "restarting the analysis on the new conflict");
-          ++stats.conflicts;
-          reason = conflict;
-          resolvent_size = 0;
-          antecedent_size = 1;
-          resolved = 0;
-          open = 0;
-          analyze_reason (0, reason, open, resolvent_size, antecedent_size);
-          conflict_size = antecedent_size - 1;
-          assert (open > 1);
+    /*----------------------------------------------------------------------*/
+
+    // First derive the 1st UIP clause by going over literals assigned on the
+    // current decision level.  Literals in the conflict are marked as 'seen'
+    // as well as all literals in reason clauses of already 'seen' literals on
+    // the current decision level.  Thus the outer loop starts with the
+    // conflict clause as 'reason' and then uses the 'reason' of the next
+    // seen literal on the trail assigned on the current decision level.
+    // During this process maintain the number 'open' of seen literals on the
+    // current decision level with not yet processed 'reason'.  As soon 'open'
+    // drops to one, we have found the first unique implication point.  This
+    // is sound because the topological order in which literals are processed
+    // follows the assignment order and a more complex algorithm to find
+    // articulation points is not necessary.
+    //
+    Clause *reason = conflict;
+    // if (conflict->xor_flag) printf("by analyze find xor conflict\n");
+    // pri_val_clause(conflict);
+    LOG (reason, "analyzing conflict");
+
+    assert (clause.empty ());
+    assert (lrat_chain.empty ());
+
+    const auto &t = &trail;
+    int i = t->size ();      // Start at end-of-trail.
+    int open = 0;            // Seen but not processed on this level.
+    uip = 0;             // The first UIP literal.
+    int resolvent_size = 0;  // without the uip
+    int antecedent_size = 1; // with the uip and without unit literals
+    int conflict_size = 0;   // without the uip and without unit literals
+    int resolved = 0;        // number of resolution (0 = clause in CNF)
+    int for_cnt = 0;
+    //const bool otfs = opts.otfs;
+    const bool otfs = false;
+
+    for (;;) {
+      for_cnt ++;
+      //printf("uip start,cnt is %d\n",for_cnt);
+      antecedent_size = 1; // for uip
+
+      // reason->pri_clause();
+      // if (reason->literals[0] == -138 && reason->literals[1] == -24)
+      // {
+      //   printf("debug_now\n");
+      // }
+      //pri_val_clause(reason);
+      //printf("analyze by 1\n");
+      analyze_reason (uip, reason, open, resolvent_size, antecedent_size);
+      //printf("uip mid end\n");
+      if (resolved == 0)
+        conflict_size = antecedent_size - 1;
+      assert (resolvent_size == open + (int) clause.size ());
+
+      //printf("if forward : ");reason->pri_clause();
+      if (otfs && resolved > 0 && antecedent_size > 2 &&
+          resolvent_size < antecedent_size) {
+        assert (reason != conflict);
+        LOG (analyzed, "found candidate for OTFS conflict");
+        LOG (clause, "found candidate for OTFS conflict");
+        LOG (reason, "found candidate (size %d) for OTFS resolvent",
+            antecedent_size);
+      
+        int other;
+        if (reason -> xor_flag)
+        {
+          if (abs(reason->literals[0]) == abs(uip))
+          {
+            other = reason->literals[1];
+          }
+          else other = reason->literals[0];
         }
+        else other = reason->literals[0] ^ reason->literals[1] ^ uip;
+        
+        //printf("?? other : %d , 0 : %d , 1 : %d,uip:%d\n",other,reason->literals[0],reason->literals[1],uip);
+        // reason = on_the_fly_strengthen (reason, uip);
+        //printf("other is %d,reason is : ",other); reason->pri_clause();
+        assert (other != uip);
+        // if (opts.bump)
+        //   bump_variables ();
+
+        //printf("on the fly end\n");
+        assert (conflict_size);
+        if (!reason) {
+          uip = -other;
+          assert (open == 1);
+          LOG ("clause is actually unit %d, stopping", -uip);
+          reverse (begin (mini_chain), end (mini_chain));
+          for (auto id : mini_chain)
+            lrat_chain.push_back (id);
+          mini_chain.clear ();
+          clear_analyzed_levels ();
+          assert (!opts.exteagerreasons);
+          clause.clear ();
+          break;
+        }
+        assert (conflict_size >= 2);
+
+        //printf("lrat_chain end\n");
+
+        if (resolved == 1 && resolvent_size < conflict_size) {
+          // here both clauses are part of the CNF, so one subsumes the other
+          otfs_subsume_clause (reason, conflict);
+          LOG (reason, "changing conflict to");
+          --conflict_size;
+          assert (conflict_size == reason->size);
+          ++stats.otfs.subsumed;
+          ++stats.subsumed;
+        }
+
+        LOG (reason, "changing conflict to");
+        conflict = reason;
+        //printf("conflict is by reason: "); conflict->pri_clause();
+        //printf("why now? open is %d\n",open);
+        if (open == 1) {
+          int forced = 0;
+          const int conflict_level = otfs_find_backtrack_level (forced);
+          int new_level = determine_actual_backtrack_level (conflict_level);
+          UPDATE_AVERAGE (averages.current.level, new_level);
+          // printf("backtracking 3\n");
+          backtrack (new_level);
+
+          LOG ("forcing %d", forced);
+          search_assign_driving (forced, conflict);
+
+          // Clean up.
+          //
+          conflict = 0;
+          clear_analyzed_literals ();
+          clear_analyzed_levels ();
+          clause.clear ();
+          STOP (analyze);
+          return;
+        }
+
+        stats.conflicts++;
+
+        clear_analyzed_literals ();
+        clear_analyzed_levels ();
+        clause.clear ();
+        resolvent_size = 0;
+        antecedent_size = 1;
+        resolved = 0;
+        open = 0;
+        //printf("analyze by 2\n");
+        //pri_val_clause(reason);
+        analyze_reason (0, reason, open, resolvent_size, antecedent_size);
+        conflict_size = antecedent_size - 1;
+        assert (open > 1);
       }
-      assert (i > 0);
-      const int lit = (*t)[--i];
-      if (!flags (lit).seen)
-        continue;
-      if (var (lit).level == level)
-        uip = lit;
+
+      //printf("uip end\n");
+      ++resolved;
+
+      uip = 0;
+      while (!uip) {
+        if (!i) {
+          //printf("uip is running\n");
+          lazy_external_propagator_out_of_order_clause (uip);
+          if (unsat)
+            return;
+          else if (uip) {
+            open = 1;
+            break;
+          } else {
+            LOG (reason, "restarting the analysis on the new conflict");
+            ++stats.conflicts;
+            reason = conflict;
+            resolvent_size = 0;
+            antecedent_size = 1;
+            resolved = 0;
+            open = 0;
+            //printf("analyze by 3\n");
+            analyze_reason (0, reason, open, resolvent_size, antecedent_size);
+            conflict_size = antecedent_size - 1;
+            assert (open > 1);
+          }
+        }
+        assert (i > 0);
+        const int lit = (*t)[--i];
+        //printf("lit is %d\n",lit);
+        if (!flags (lit).seen)
+          continue;
+        if (var (lit).level == level)
+          uip = lit;
+      }
+      if (!--open)
+        break;
+      reason = var (uip).reason;
+      //printf("uip is %d\n",uip);
+      //if (xor_con_size) xor_conflict_clause[xor_con_size]->pri_clause("xor_con");
+      //if (xor_con_size) printf("xor_con : ") , pri_val_clause(xor_conflict_clause[xor_con_size]);
+      //if (reason) reason->pri_clause("reason");
+      if (reason == external_reason) {
+        assert (!opts.exteagerreasons);
+        reason = learn_external_reason_clause (-uip, 0, true);
+        var (uip).reason = reason;
+      }
+      if (!reason) {
+        LOG ("reason for UIP %d is NULL, treating as decision variable", uip);
+      }
+      assert (reason != external_reason);
+      LOG (reason, "analyzing %d reason", uip);
+      assert (resolvent_size);
+      --resolvent_size;
     }
-    if (!--open)
-      break;
-    reason = var (uip).reason;
-    if (reason == external_reason) {
-      assert (!opts.exteagerreasons);
-      reason = learn_external_reason_clause (-uip, 0, true);
-      var (uip).reason = reason;
-    }
-    assert (reason != external_reason);
-    LOG (reason, "analyzing %d reason", uip);
-    assert (resolvent_size);
-    --resolvent_size;
+
+    // printf("analyze finish\n");
+    LOG ("first UIP %d", uip);
+    // printf("uip is %d\n",uip);
+    clause.push_back (-uip);
   }
-  LOG ("first UIP %d", uip);
-  clause.push_back (-uip);
 
   // Update glue and learned (1st UIP literals) statistics.
   //
@@ -1209,19 +1400,19 @@ void Internal::analyze () {
   // MiniSAT and described in our joint SAT'09 paper.
   //
   if (size > 1) {
-    if (opts.shrink)
-      shrink_and_minimize_clause ();
-    else if (opts.minimize)
-      minimize_clause ();
+    // if (opts.shrink)
+    //   shrink_and_minimize_clause ();
+    // else if (opts.minimize)
+    //   minimize_clause ();
 
     size = (int) clause.size ();
 
     // Update decision heuristics.
     //
-    if (opts.bump) {
-      bump_also_all_reason_literals ();
-      bump_variables ();
-    }
+    // if (opts.bump) {
+    //   bump_also_all_reason_literals ();
+    //   bump_variables ();
+    // }
 
     if (external->learner)
       external->export_learned_large_clause (clause);
@@ -1248,12 +1439,23 @@ void Internal::analyze () {
   // Determine back-jump level, learn driving clause, backtrack and assign
   // flipped 1st UIP literal.
   //
+
+  // cout << "clasue : ";
+  // for (auto it : clause)
+  // {
+  //   cout << it << " : " << var(it).level << endl;
+  // }
+
+
   int jump;
   Clause *driving_clause = new_driving_clause (glue, jump);
   UPDATE_AVERAGE (averages.current.jump, jump);
 
+  // driving_clause->pri_clause("driving_clause");
+
   int new_level = determine_actual_backtrack_level (jump);
   UPDATE_AVERAGE (averages.current.level, new_level);
+  //printf("backtracking 4\n");
   backtrack (new_level);
 
   // It should hold that (!level <=> size == 1)
@@ -1267,6 +1469,9 @@ void Internal::analyze () {
     search_assign_driving (-uip, driving_clause);
   } else
     learn_empty_clause ();
+
+  // printf("learn clause: " );
+  // if (driving_clause) driving_clause->pri_clause();
 
   if (stable)
     reluctant.tick (); // Reluctant has its own 'conflict' counter.
@@ -1323,6 +1528,7 @@ void Internal::lazy_external_propagator_out_of_order_clause (int &uip) {
     LOG ("found out-of-order unit");
     uip = -clause[0];
     assert (uip);
+    //printf("backtracking 5\n");
     backtrack (var (uip).level);
     assert (val (uip) > 0);
     clause.clear ();
@@ -1331,6 +1537,7 @@ void Internal::lazy_external_propagator_out_of_order_clause (int &uip) {
     const int glue = clause.size () - 1;
     conflict = new_driving_clause (glue, jump);
     UPDATE_AVERAGE (averages.current.level, jump);
+    //printf("backtracking 6\n");
     backtrack (jump);
     LOG (conflict, "new conflict");
   }
