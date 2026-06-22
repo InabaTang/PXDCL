@@ -149,15 +149,14 @@ Clause *Internal::new_clause (bool red, int glue) {
       long_xor_clauses.push_back(c);
       xor_clause_counter.push_back(0);
       xor_clause_size.push_back(c->size);
-      xor_clause_parity.push_back(0);
+      xor_clause_parity.push_back(false);
       // Ensure var_to_long_xor is large enough
       for (int i = 0; i < c->size; i++) {
         int lit = c->literals[i];
         int v = abs(lit);
-        int packed = (idx << 1) | (int)(lit > 0);  // encode ci + sign in one int
         while ((int)var_to_long_xor.size() <= v)
           var_to_long_xor.push_back({});
-        var_to_long_xor[v].push_back(packed);
+        var_to_long_xor[v].push_back(idx);
       }
     }
   }

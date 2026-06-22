@@ -133,14 +133,9 @@ void Internal::backtrack_without_updating_phases (int new_level) {
       {
         int vv = abs(lit);
         if (vv < (int)var_to_long_xor.size()) {
-          bool assigned_is_pos = (lit > 0);
-          for (int packed : var_to_long_xor[vv]) {
-            int ci = packed >> 1;
-            if (long_xor_clauses[ci] == nullptr) continue;  // clause deleted by GC
-            bool clause_is_pos = packed & 1;
-            // Undo the parity flip: same condition as in search_assign
-            if (assigned_is_pos == clause_is_pos)
-              xor_clause_parity[ci] = !xor_clause_parity[ci];
+          for (int ci : var_to_long_xor[vv]) {
+            if (long_xor_clauses[ci] == nullptr) continue;
+            xor_clause_parity[ci] = !xor_clause_parity[ci];
             xor_clause_counter[ci]--;
           }
         }

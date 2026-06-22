@@ -155,12 +155,8 @@ inline void Internal::search_assign (int lit, Clause *reason) {
     }
     // printf("\n");
     //if (assigned_number + 1 != reason->size) printf("something wrong\n");
-    if (!assigned)
-    {
-      printf("Find : lit xor negative , lit is : %d , xor_propagation_flag is %d\n",lit,propagated_xor_debug);
-      printf("xor cluase is : ");
-      if (reason) reason->pri_clause();
-    }
+    // XOR assignment sanity check: all other literals must be false,
+    // so the parity of true literals must be odd.
     assert(assigned);
   }
   const int idx = vidx (lit);
@@ -255,16 +251,9 @@ inline void Internal::search_assign (int lit, Clause *reason) {
   {
     int v = abs(lit);
     if (v < (int)var_to_long_xor.size()) {
-      bool assigned_is_pos = (lit > 0);
-      for (int packed : var_to_long_xor[v]) {
-        int ci = packed >> 1;
-        if (long_xor_clauses[ci] == nullptr) continue;  // clause deleted by GC
-        bool clause_is_pos = packed & 1;
-        // Parity flips iff the literal in the XOR clause evaluates to True.
-        // Since the assigned literal is always True (val(lit) > 0),
-        // the clause literal is True when both have the same sign.
-        if (assigned_is_pos == clause_is_pos)
-          xor_clause_parity[ci] = !xor_clause_parity[ci];
+      for (int ci : var_to_long_xor[v]) {
+        if (long_xor_clauses[ci] == nullptr) continue;
+        xor_clause_parity[ci] = !xor_clause_parity[ci];
         if (++xor_clause_counter[ci] == xor_clause_size[ci])
           xor_full_clause.push_back(ci);
       }
@@ -410,10 +399,6 @@ bool Internal::propagate () {
     {
       const Watch &xw = *xj ++ = *xi ++;
       if (xw.clause->size == 0) continue;
-      if (!xw.IsXor())
-      {
-        printf("assert xor_clause"); xw.clause->pri_clause();
-      }
       assert(xw.IsXor());
       propagated_xor_debug = true;
       if (conflict) break;
@@ -502,7 +487,7 @@ bool Internal::propagate () {
       // Clause *Con = w.clause;
 
       if (w.IsXor ()) {
-        printf("Why is still xor?\n");
+        LOG ("XOR clause in regular watch list");
         // if (LitKnown(xorCon[0]) && _reason[xorCon[0].Var()].IsXorReason()
         //     && _reason[xorCon[0].Var()].ClauseID() ==
         //     xorWatched[i]._cRef)
@@ -732,9 +717,7 @@ bool Internal::propagate () {
     }
   }
 
-  // SEGA: check long XOR clauses for conflicts right after propagation,
-  // before any restart/rephase/reduce decisions in the main CDCL loop.
-  // This detects XOR violations at the earliest possible moment.
+  // SEGA: check long XOR clauses for conflicts right after propagation
   if (!conflict && !searching_lucky_phases && segaing()) {
     sega();
   }
@@ -758,6 +741,14 @@ bool Internal::propagate () {
       if (stable)
         stats.stabconflicts++;
       stats.conflicts++;
+
+      // Track XOR conflicts for adaptive restart
+      if (conflict->xor_flag) {
+        stats.xor_conflicts++;
+        xor_conflict_ema = 0.1 + 0.9 * xor_conflict_ema;
+      } else {
+        xor_conflict_ema = 0.0 + 0.9 * xor_conflict_ema;
+      }
 
       LOG (conflict, "conflict");
 

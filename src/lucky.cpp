@@ -481,6 +481,11 @@ int Internal::lucky_phases () {
     res = negative_horn_satisfiable ();
   if (!res)
     res = positive_horn_satisfiable ();
+  // XOR-aware strategy disabled: interacts poorly with SEGA during
+  // lucky phases (!searching_lucky_phases guard blocks SEGA checks),
+  // causing false positives on XOR satisfaction.
+  // if (!res && !xor_clauses.empty ())
+  //   res = xor_satisfiable ();
   if (res < 0)
     assert (termination_forced), res = 0;
   if (res == 10)
@@ -506,6 +511,77 @@ int Internal::lucky_phases () {
   STOP (search);
 
   return res;
+}
+
+// XOR-aware lucky phase assignment: try assigning variables in XOR clauses
+// to all-true or all-false, then check XOR satisfaction explicitly.
+// SEGA is disabled during lucky phases (!searching_lucky_phases guard in
+// propagate), so we manually check XOR clause satisfaction here.
+int Internal::xor_satisfiable () {
+  if (unsat) return 0;
+  if (xor_clauses.empty ()) return 0;
+  int res = lucky_decide_assumptions ();
+  if (res) return res;
+
+  // Strategy 1: try assigning all XOR-clause variables to true
+  LOG ("checking XOR all-true phase assignment");
+  for (auto c : xor_clauses) {
+    if (terminated_asynchronously (10)) return unlucky (-1);
+    if (c->garbage) continue;
+    for (auto lit : *c) {
+      int idx = abs (lit);
+      if (val (idx)) continue;
+      search_assume_decision (idx);     // assign positive
+      if (!propagate ()) return unlucky (0);
+    }
+  }
+  // Manually check XOR clause satisfaction (SEGA is disabled in lucky mode)
+  if (propagated == trail.size ()) {
+    bool all_xor_sat = true;
+    for (auto c : xor_clauses) {
+      if (c->garbage) continue;
+      bool parity = false;
+      for (auto lit : *c) {
+        if (val (lit) > 0) parity = !parity;
+      }
+      if (!parity) { all_xor_sat = false; break; }
+    }
+    if (all_xor_sat && num_assigned == (size_t) max_var) {
+      stats.lucky.succeeded++;
+      return 10;
+    }
+  }
+  backtrack ();
+
+  // Strategy 2: try assigning all XOR-clause variables to false
+  LOG ("checking XOR all-false phase assignment");
+  for (auto c : xor_clauses) {
+    if (terminated_asynchronously (10)) return unlucky (-1);
+    if (c->garbage) continue;
+    for (auto lit : *c) {
+      int idx = abs (lit);
+      if (val (idx)) continue;
+      search_assume_decision (-idx);    // assign negative
+      if (!propagate ()) return unlucky (0);
+    }
+  }
+  if (propagated == trail.size ()) {
+    bool all_xor_sat = true;
+    for (auto c : xor_clauses) {
+      if (c->garbage) continue;
+      bool parity = false;
+      for (auto lit : *c) {
+        if (val (lit) > 0) parity = !parity;
+      }
+      if (!parity) { all_xor_sat = false; break; }
+    }
+    if (all_xor_sat && num_assigned == (size_t) max_var) {
+      stats.lucky.succeeded++;
+      return 10;
+    }
+  }
+
+  return unlucky (0);
 }
 
 } // namespace CaDiCaL

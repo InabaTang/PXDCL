@@ -197,7 +197,7 @@ int Internal::gauss_division()
 
 int Internal::gauss_elimination()
 {
-    cout << "c Gauss elimination start : " << clause_id << endl;
+    LOG ("Gauss elimination start");
     for (int ca = 0 ; ca < block_number - 1; ca ++)
     {
         if (xor_kdd[ca].size() == 0) continue;
@@ -283,7 +283,7 @@ int Internal::gauss_elimination()
         }
         mzd_free(mat);
     }
-    cout << "c Gauss elimination done : " << clause_id << endl;
+    LOG ("Gauss elimination done");
     
     return true;
 }
@@ -291,7 +291,8 @@ int Internal::gauss_elimination()
 
 int Internal::gauss_old_elimination()
 {
-    cout << "c Gauss elimination start : " << clause_id << endl;
+    printf ("c Gauss elimination: %d XOR clauses, %d variables\n",
+            (int) xor_clauses.size(), max_var);
     int rows = xor_clauses.size();
     int cols = max_var + 1;
     mzd_t* mat = mzd_init(rows, cols);
@@ -305,14 +306,9 @@ int Internal::gauss_old_elimination()
         }
         mzd_write_bit(mat, row, cols - 1, 1);
     }
-    // printf("Matrix %dx%d:\n", mat->nrows, mat->ncols);
-    // for (int row = 0; row < mat->nrows; row++) {
-    //     for (int col = 0; col < mat->ncols; col++) {
-    //         printf("%d ", mzd_read_bit(mat, row, col));
-    //     }
-    //     printf("\n");
-    // }
     mzd_echelonize(mat, true);
+
+    int units = 0, binaries = 0, ternaries = 0, skipped = 0;
     for (int row = 0 , rhs ; row < rows; row ++)
     {
         vector<int> ones;
@@ -324,7 +320,7 @@ int Internal::gauss_old_elimination()
                 assert(mat != nullptr);
                 assert(row >= 0 && row < mat->nrows);
                 assert(col >= 0 && col < mat->ncols);
-                if (ones.size() == 2) goto NextRow;
+                if (ones.size() == 3) goto NextRow;  // skip rows with 4+ ones
                 ones.push_back(col + 1);
             }
         }
@@ -334,29 +330,43 @@ int Internal::gauss_old_elimination()
         original.clear();
         if (ones.size() == 1)
         {
+            units++;
             original.push_back(ones[0] * (rhs ? 1 : -1));
         }
         else if (ones.size() == 2)
         {
+            binaries++;
             int p = ones[0], q = rhs ? ones[1] : -ones[1];
             original.push_back(p);
             original.push_back(q);
             xor_clause_flag = true;
         }
-        else assert(ones.size() <= 2);
+        else if (ones.size() == 3)
+        {
+            ternaries++;
+            int p = ones[0], q = ones[1], r = rhs ? ones[2] : -ones[2];
+            original.push_back(p);
+            original.push_back(q);
+            original.push_back(r);
+            xor_clause_flag = true;
+        }
+        else if (ones.size() >= 4)
+        {
+            skipped++;
+        }
 
-        if (ones.size() >= 1) 
+        if (ones.size() >= 1)
         {
             add_original_lit(0);
             original.clear();
-            //clauses[clauses.size() - 1]->pri_clause();
         }
         xor_clause_flag = false;
         NextRow: ;
     }
     mzd_free(mat);
-    cout << "c Gauss elimination done : " << clause_id << endl;
-    
+    printf ("c Gauss result: %d units, %d binaries, %d ternaries, %d skipped (4+), %d empty\n",
+            units, binaries, ternaries, skipped, rows - units - binaries - ternaries - skipped);
+
     return true;
 }
 

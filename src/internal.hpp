@@ -345,6 +345,10 @@ struct Internal {
 
   bool segaing();
   void sega();
+  void bump_near_full_xor();      // boost scores for near-full XOR clauses
+  void bump_xor_variable_scores(); // initial score boost for XOR variables
+  void rebuild_sega_data();       // rebuild SEGA tracking after preprocessing
+  double xor_conflict_ema;        // EMA of XOR conflict ratio for adaptive restart
 
 
   // for xor gauss
@@ -356,8 +360,8 @@ struct Internal {
   vector<Clause *> long_xor_clauses;        // XOR clauses with size > 5
   vector<int> xor_clause_counter;           // assigned-literal count per clause
   vector<int> xor_clause_size;              // size of each long XOR clause
-  vector<char> xor_clause_parity;           // tracked parity (updated incrementally)
-  // variable → packed entries: (clause_index << 1) | is_positive_literal_in_clause
+  vector<bool> xor_clause_parity;           // tracked parity (updated incrementally)
+  // variable → indices into long_xor_clauses (no sign info)
   vector<vector<int>> var_to_long_xor;
   vector<int> xor_full_clause;              // fully-assigned clause indices
   int **gauss_dp;
@@ -994,6 +998,7 @@ struct Internal {
   int backward_true_satisfiable ();
   int positive_horn_satisfiable ();
   int negative_horn_satisfiable ();
+  int xor_satisfiable ();          // greedy XOR-clause phase assignment
 
   // Asynchronous terminating check.
   //

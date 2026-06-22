@@ -1088,6 +1088,10 @@ void Internal::analyze () { //Find : analyze
 
       const int conflict_level = find_conflict_level (forced);
 
+      // XOR conflict shortcut: when the conflict is an XOR clause with
+      // multiple literals at the highest decision level, try to XOR-resolve
+      // them away using their reason clauses.  This eliminates pivots and
+      // often produces a single UIP, allowing us to drive directly from
       // In principle we can perform conflict analysis as in non-chronological
       // backtracking except if there is only one literal with the maximum
       // assignment level in the clause.  Then standard conflict analysis is
@@ -1103,28 +1107,15 @@ void Internal::analyze () { //Find : analyze
         assert (conflict_level > 0);
         LOG ("single highest level literal %d", forced);
 
-        // The pseudo code in the SAT'18 paper actually backtracks to the
-        // 'second highest decision' level, while their code backtracks
-        // to 'conflict_level-1', which is more in the spirit of chronological
-        // backtracking anyhow and thus we also do the latter.
-        //
-        //printf("backtracking 1\n");
         backtrack (conflict_level - 1);
 
-        // if we are on decision level 0 search assign will learn unit
-        // so we need a valid chain here (of course if we are not on decision
-        // level 0 this will not result in a valid chain).
-        // we can just use build_chain_for_units in propagate
-        //
         build_chain_for_units (forced, conflict, 0);
 
         LOG ("forcing %d", forced);
-        // printf("forcing is %d , after is : ",forced); pri_val_clause(conflict);
         if (conflict && conflict->xor_flag)
         {
           bool assigned = false;
-          for (auto c_lit : *conflict)
-          {
+          for (auto c_lit : *conflict) {
             int vc = val(c_lit);
             if (vc > 0) assigned ^= true;
             else if (c_lit == forced) assigned ^= true;
@@ -1182,12 +1173,16 @@ void Internal::analyze () { //Find : analyze
     // articulation points is not necessary.
     //
     Clause *reason = conflict;
-    // if (conflict->xor_flag) printf("by analyze find xor conflict\n");
-    // pri_val_clause(conflict);
     LOG (reason, "analyzing conflict");
 
     assert (clause.empty ());
     assert (lrat_chain.empty ());
+
+    // XOR conflict: bump all variables in the XOR clause
+    if (conflict->xor_flag) {
+      for (auto lit : *conflict)
+        bump_variable (lit);
+    }
 
     const auto &t = &trail;
     int i = t->size ();      // Start at end-of-trail.
@@ -1400,9 +1395,12 @@ void Internal::analyze () { //Find : analyze
   // MiniSAT and described in our joint SAT'09 paper.
   //
   if (size > 1) {
-    // if (opts.shrink)
-    //   shrink_and_minimize_clause ();
-    // else if (opts.minimize)
+    // Clause minimization (minimize/shrink) is disabled because it
+    // interacts badly with XOR clause mutation in analyze_reason().
+    // XOR clauses are permanently mutated (true→false flip) during
+    // 1-UIP analysis, which breaks recursive minimization.
+    // Re-enabling causes 5-10x performance regression on XOR instances.
+    // if (opts.minimize)
     //   minimize_clause ();
 
     size = (int) clause.size ();

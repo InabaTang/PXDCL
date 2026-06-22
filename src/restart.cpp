@@ -102,6 +102,10 @@ bool Internal::restarting () {
     return false;
   double f = averages.current.glue.fast;
   int p = stable ? opts.restartmarginstable : opts.restartmarginfocused;
+  // Adaptive restart: more frequent when XOR conflicts dominate
+  if (xor_conflict_ema > 0.25) {
+    p = max (1, (int) (p * 0.6));
+  }
   double m = (100.0 + p) / 100.0;
   double s = averages.current.glue.slow;
   double l = m * s;

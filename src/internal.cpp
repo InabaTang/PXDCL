@@ -25,7 +25,7 @@ Internal::Internal ()
       target_assigned (0), no_conflict_until (0), unsat_constraint (false),
       marked_failed (true), sweep_incomplete (false),
       randomized_deciding (false), citten (0), num_assigned (0), proof (0),
-      opts (this),xor_kdd(500),
+      opts (this), xor_conflict_ema (0), xor_kdd (500),
 #ifndef QUIET
       profiles (this), force_phase_messages (false),
 #endif
@@ -331,23 +331,26 @@ int Internal::cdcl_loop_with_inprocessing () {
       rephase (); // reset variable phases
     else if (reducing ())
       reduce (); // collect useless clauses
+      // else if (conditioning ())
+      //   condition (); // globally blocked clauses
+      //  else if (inprobing ())
+      //    inprobe (); // schedule of inprocessing
+      //  else if (ineliminating ())
+      //    elim (); // variable elimination
+      //  else if (compacting ())
+      //    compact (); // collect variables
 
     else if (segaing())
     {
       sega();
     }
-    // else if (conditioning ())
-    //   condition (); // globally blocked clauses
-
-    // TODO:
-    //  else if (inprobing ())
-    //    inprobe (); // schedule of inprocessing
-    //  else if (ineliminating ())
-    //    elim (); // variable elimination
-    //  else if (compacting ())
-    //    compact (); // collect variables
-    else
+    else {
+      if (stats.conflicts >= lim.xor_boost) {
+        bump_near_full_xor();
+        lim.xor_boost = stats.conflicts + 100;
+      }
       res = decide (); // next decision
+    }
   }
 
   if (stable) {
@@ -592,6 +595,11 @@ void Internal::init_search_limits () {
 
   /*----------------------------------------------------------------------*/
 
+  // XOR variable boost: start after 50 conflicts, then every 100 thereafter
+  lim.xor_boost = stats.conflicts + 50;
+
+  /*----------------------------------------------------------------------*/
+
   if (!incremental) {
     stable = opts.stabilize && opts.stabilizeonly;
     if (stable)
@@ -787,10 +795,13 @@ void Internal::preprocess_quickly (bool always) {
     decompose ();
   binary_clauses_backbone ();
 
-  if (sweep ())
+  // sweep() modifies clause literals (variable substitution) which
+  // breaks XOR parity semantics.  Skip it when XOR clauses are present.
+  if (xor_clauses.empty () && sweep ())
     decompose ();
 
-  if (opts.factor)
+  // factor() may also modify clause structure; skip for XOR safety.
+  if (xor_clauses.empty () && opts.factor)
     factor ();
 
   // if (opts.fastelim)
@@ -812,30 +823,48 @@ void Internal::preprocess_quickly (bool always) {
 
 int Internal::preprocess (bool always) {
   int res = 0;
-  // if (!level && !unsat && opts.luckyearly)
-  //   res = lucky_phases ();
-  // if (res)
-  //   return res;
+  if (!level && !unsat && opts.luckyearly)
+    res = lucky_phases ();
+  if (res)
+    return res;
 
   if (opts.deduplicateallinit && !stats.deduplicatedinitrounds)
     deduplicate_all_clauses ();
 
-  if (opts.gaussian)
+  // Auto-enable Gaussian elimination for XOR-heavy instances.
+  // XOR constraints form a linear system over GF(2); Gaussian elimination
+  // can dramatically simplify them before CDCL search.
+  if (opts.gaussian && !xor_clauses.empty())
   {
+    int64_t before_clauses = clauses.size ();
+    int before_xor = (int) xor_clauses.size ();
+    printf ("c Gauss: %d XOR clauses, %" PRId64 " total clauses before elimination\n",
+            before_xor, before_clauses);
+
     long long max_gauss = 1e9;
     if (1LL * max_var * xor_clauses.size() <= 1LL * max_gauss)
       gauss_old_elimination();
     else
     {
-      cout << "so big to gauss" << endl;
+      LOG ("XOR system too large for direct Gauss, using block elimination");
       int L = gauss_division();
       gauss_division_preprocessing(L);
       gauss_elimination();
     }
-    
+
+    int64_t after_clauses = clauses.size ();
+    int after_xor = (int) xor_clauses.size ();
+    printf ("c Gauss: %d XOR clauses, %" PRId64 " total clauses after elimination\n",
+            after_xor, after_clauses);
   }
 
-  //preprocess_quickly (always);
+  if (!xor_clauses.empty())
+    bump_xor_variable_scores();
+
+  preprocess_quickly (always);
+  // Rebuild SEGA data after preprocessing may have modified clause DB.
+  if (!xor_clauses.empty ())
+    rebuild_sega_data ();
   for (int i = 0; i < lim.preprocessing; i++)
     if (!preprocess_round (i))
       break;
@@ -1017,19 +1046,22 @@ int Internal::solve (bool preprocess_only) { // Find : Internal solve
     if (!preprocess_only)
       init_search_limits ();
   }
-  // if (!preprocess_only) {
-  //   if (!res && !level)
-  //     res = local_search ();
-  // }
+  if (!preprocess_only) {
+    if (!res && !level)
+      res = local_search ();
+  }
   if (!res && !level)
     res = preprocess (preprocess_only);
   if (!preprocess_only) {
+    // lucky_phases and local_search disabled: SEGA is blocked during
+    // lucky phases (!searching_lucky_phases guard in propagate), causing
+    // XOR clauses to be ignored during satisfaction checks → false SAT.
     // if (!res && !level && opts.luckylate)
     //   res = lucky_phases ();
     // if (!res && !level)
     //   res = local_search ();
-    // if (!res)
-    //   decay_clauses_upon_incremental_clauses ();
+    if (!res)
+      decay_clauses_upon_incremental_clauses ();
     if (!res || (res == 10 && external_prop)) {
       if (res == 10 && external_prop && level)
         backtrack ();

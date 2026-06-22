@@ -715,11 +715,11 @@ inline void Internal::walk_save_minimum (Walker &walker) {
   }
   if (walker.minimum == 0) {
     for (auto c : clauses) {
-      if (c->xor_flag) 
-        continue;
       if (c->garbage)
         continue;
       if (c->redundant)
+        continue;
+      if (c->xor_flag)
         continue;
       int satisfied = 0;
       for (const auto &lit : *c) {
@@ -851,8 +851,6 @@ int Internal::walk_round (int64_t limit, bool prev) {
     double size = 0;
     int64_t n = 0;
     for (const auto c : clauses) {
-      if (c->xor_flag)
-        continue;
       if (c->garbage)
         continue;
       if (c->redundant) {
@@ -870,9 +868,9 @@ int Internal::walk_round (int64_t limit, bool prev) {
       n++;
       const int size = c->size;
 
-      // Move to front satisfied literals and determine whether there
-      // is at least one (non-assumed) literal that can be flipped.
-      //
+      if (c->xor_flag)
+        continue;
+      // Regular clause: at least one true literal = satisfied
       for (int i = 0; satisfied < 2 && i < size; i++) {
         const int lit = lits[i];
         assert (active (lit)); // Due to garbage collection.

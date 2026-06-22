@@ -31,6 +31,7 @@ struct Limit {
   int64_t incremental_decay; // conflict/ticks limit for next clause 'decay'
                              // for incremental clauses
   int64_t random_decision;   // randomized decision limit for conflicts
+  int64_t xor_boost;         // conflict limit for next XOR variable boost
 
   int keptsize;           // maximum kept size in 'reduce'
   int keptglue;           // maximum kept glue in 'reduce'
