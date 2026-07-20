@@ -477,9 +477,6 @@ bool Internal::propagate () {
     //printf("xor_propagations end\n");
 
     // ── Mixed XOR+OR Clause Propagation (Plan C: track lost watches) ──
-    // FIXME: Enabling propagation increases violations (359→511).
-    // The handle_only_w1 logic has bugs beyond the parity fix.
-    // Disabled until propagation logic is fully debugged.
     if (false && !conflict && !mixed_tab.empty ()) {
       Watches &mws = mixed_watches (abs (lit));
       const const_watch_iterator meow = mws.end ();
@@ -653,6 +650,38 @@ bool Internal::propagate () {
         while (mi != meow)
           *mj++ = *mi++;
         mws.resize (mj - mws.begin ());
+      }
+    }
+
+    // Recover lost watches: ensure clauses in lost_mixed_watches have ≥1 watch
+    for (auto c : lost_mixed_watches) {
+      if (!c || c->garbage || !c->mixed_flag) continue;
+      int wcnt = 0;
+      for (int i = 0; i < c->size; i++) {
+        for (auto &w : mixed_watches (c->literals[i]))
+          if (w.clause == c) wcnt++;
+      }
+      if (wcnt < 2) {
+        // Find two unassigned or satisfied literals to watch
+        int nw1 = -1, nw2 = -1;
+        for (int i = 0; i < c->size; i++) {
+          int v = val (c->literals[i]);
+          if (v > 0) continue; // TRUE literal
+          if (!v) { // unassigned
+            if (nw1 < 0) nw1 = i;
+            else if (nw2 < 0) { nw2 = i; break; }
+          }
+        }
+        if (nw2 < 0) {
+          // Only one unassigned: use any position as second watch
+          for (int i = 0; i < c->size; i++)
+            if (i != nw1) { nw2 = i; break; }
+        }
+        if (nw1 >= 0 && nw2 >= 0) {
+          c->mixed_w1 = nw1; c->mixed_w2 = nw2;
+          watch_mixed_literal (c->literals[nw1], c->literals[nw2], c);
+          watch_mixed_literal (c->literals[nw2], c->literals[nw1], c);
+        }
       }
     }
 
