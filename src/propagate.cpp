@@ -477,6 +477,9 @@ bool Internal::propagate () {
     //printf("xor_propagations end\n");
 
     // ── Mixed XOR+OR Clause Propagation (Plan C: track lost watches) ──
+    // FIXME: Enabling propagation increases violations (359→511).
+    // The handle_only_w1 logic has bugs beyond the parity fix.
+    // Disabled until propagation logic is fully debugged.
     if (false && !conflict && !mixed_tab.empty ()) {
       Watches &mws = mixed_watches (abs (lit));
       const const_watch_iterator meow = mws.end ();
@@ -617,10 +620,11 @@ bool Internal::propagate () {
               schedule_mixed_reconnect(c); mj--; continue;
             }
             if (parity_without) {
-              // Block already satisfied → clause SAT
+              // Rest of block already has odd parity → block SAT
+              // (w1 can be set FALSE to preserve odd parity)
               continue;
             }
-            // Need w1=TRUE for odd parity
+            // Rest has even parity → w1 must be TRUE for odd parity
             build_chain_for_units(l1, c, 0);
             search_assign(l1, c);
             ticks++;
