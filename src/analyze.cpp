@@ -660,8 +660,10 @@ inline int Internal::find_conflict_level (int &forced) {
   // Skip reordering for mixed clauses: block offsets must be preserved.
   // forced was correctly computed by the loop above; preserve it.
   // If only one literal at the highest decision level, it can drive.
+  // Mixed clause: always full 1-UIP. Driving path flips 1 literal
+  // without learning, causing repeated violations.
   if (conflict->mixed_flag) {
-    if (count != 1) forced = 0;
+    forced = 0;
     return res;
   }
 

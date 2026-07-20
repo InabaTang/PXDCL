@@ -927,6 +927,34 @@ bool Internal::propagate () {
     }
   }
 
+  // After full propagation, check mixed clauses.  Use mixed clause
+  // directly as conflict (not OR clause) so TRUE literals on the trail
+  // are marked seen by analyze_literal and found by 1-UIP trail scan.
+  if (!conflict && !mixed_clauses.empty ()
+      && propagated == trail.size ()
+      && num_assigned >= (size_t) active ()
+      && level > 0) {
+    for (auto c : mixed_clauses) {
+      if (!c || c->garbage) continue;
+      const int *offsets = c->block_offsets ();
+      int nb = c->mixed_num_blocks;
+      bool ok = false;
+      for (int bi = 0; bi < nb; bi++) {
+        int bs = (bi == 0) ? 0 : offsets[bi - 1];
+        int be = offsets[bi];
+        bool parity = false;
+        for (int j = bs; j < be; j++)
+          if (val (c->literals[j]) > 0) parity = !parity;
+        if (parity) { ok = true; break; }
+      }
+      if (!ok) {
+        conflict = c;
+        stats.mixed_conflicts++;
+        break;
+      }
+    }
+  }
+
   if (conflict && randomized_deciding) {
     if (!--randomized_deciding)
       VERBOSE (3, "last random decision conflict");
