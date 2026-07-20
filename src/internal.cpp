@@ -1089,6 +1089,7 @@ bool Internal::verify_all_xor_and_mixed_clauses () {
   // Check pure XOR clauses
   for (auto c : xor_clauses) {
     if (!c || c->garbage) continue;
+    if (c->size <= 0 || c->size > 1000000) continue; // safety
     bool parity = false;
     for (int i = 0; i < c->size; i++) {
       int v = val (c->literals[i]);
@@ -1103,12 +1104,15 @@ bool Internal::verify_all_xor_and_mixed_clauses () {
   // Check mixed clauses
   for (auto c : mixed_clauses) {
     if (!c || c->garbage) continue;
+    if (c->size <= 0 || c->size > 1000000) continue; // safety
+    if (c->mixed_num_blocks <= 0 || c->mixed_num_blocks > 1000) continue;
     const int *offsets = c->block_offsets ();
     int nb = c->mixed_num_blocks;
     bool satisfied = false;
     for (int bi = 0; bi < nb; bi++) {
       int bs = (bi == 0) ? 0 : offsets[bi - 1];
       int be = offsets[bi];
+      if (bs < 0 || be > c->size || bs >= be) continue;
       bool parity = false;
       bool all_assigned = true;
       for (int j = bs; j < be; j++) {

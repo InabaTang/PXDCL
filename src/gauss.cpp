@@ -369,6 +369,19 @@ int Internal::gauss_old_elimination()
         xor_clause_flag = false;
         NextRow: ;
     }
+    // Mark original XOR clauses as garbage (replaced by simplified ones)
+    for (int row = 0; row < rows; row++) {
+      Clause *c = xor_clauses[row];
+      if (c && !c->garbage) {
+        mark_garbage (c);
+      }
+    }
+    // Remove garbage references from xor_clauses
+    xor_clauses.erase (
+        remove_if (xor_clauses.begin (), xor_clauses.end (),
+                   [](Clause *c) { return !c || c->garbage; }),
+        xor_clauses.end ());
+
     mzd_free(mat);
     printf ("c Gauss result: %d units, %d binaries, %d ternaries, %d skipped (4+), %d empty\n",
             units, binaries, ternaries, skipped, rows - units - binaries - ternaries - skipped);

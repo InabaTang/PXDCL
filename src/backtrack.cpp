@@ -224,17 +224,36 @@ void Internal::backtrack_without_updating_phases (int new_level) {
 
       // Find two unassigned literals to watch
       int w1 = -1, w2 = -1;
+      bool has_true = false;
       for (int i = 0; i < c->size; i++) {
         int v = val (c->literals[i]);
         if (v > 0) {
-          // Satisfied literal: we can watch it as w1 and stop
-          if (w1 < 0) w1 = i;
+          has_true = true;
           continue;
         }
         if (!v) {
           // Unassigned
           if (w1 < 0) w1 = i;
           else if (w2 < 0) { w2 = i; break; }
+        }
+      }
+
+      // If only one unassigned, use a TRUE literal as second watch
+      if (w1 >= 0 && w2 < 0 && has_true) {
+        for (int i = 0; i < c->size; i++) {
+          if (val (c->literals[i]) > 0) {
+            w2 = i;
+            break;
+          }
+        }
+      }
+      // If still only one, use any FALSE literal as second watch
+      if (w1 >= 0 && w2 < 0) {
+        for (int i = 0; i < c->size; i++) {
+          if (i != w1) {
+            w2 = i;
+            break;
+          }
         }
       }
 
@@ -246,9 +265,6 @@ void Internal::backtrack_without_updating_phases (int new_level) {
         watch_mixed_literal (l0, l1, c);
         watch_mixed_literal (l1, l0, c);
       }
-      // If we can't find two unassigned literals, the clause is
-      // either satisfied (watches don't matter) or will conflict
-      // on next propagation (which is correct).
     }
     lost_mixed_watches.clear ();
   }
