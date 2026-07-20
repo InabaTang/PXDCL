@@ -71,7 +71,7 @@ void Internal::connect_watches (bool irredundant_only) {
           
           if (_val != 0) {
             assigned_count++;
-            if (_val < 0) parity = !parity;
+            if (_val > 0) parity = !parity;
           }
         }
         

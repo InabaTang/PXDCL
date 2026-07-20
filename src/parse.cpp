@@ -331,15 +331,33 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) { //Find :
       return err;
 
     // Mixed clause handling: check for '+' (XOR within block)
-    // Treat single-block '+' clauses as pure XOR clauses
+    // Single '+' group → pure XOR. Multiple groups separated by space → mixed.
     if (ch == '+') {
       if (!solver->internal->xor_clause_flag) {
-        // First '+' → treat as XOR clause prefix (like 'x')
+        // First '+' in this clause → start XOR/mixed mode
         solver->internal->xor_clause_flag = true;
         solver->internal->xor_clause_number++;
+        // Initialize block tracking
+        solver->internal->mixed_block_offsets.clear ();
+        solver->internal->mixed_clause_start =
+            (int) solver->internal->original.size ();
+        solver->internal->mixed_clause_flag = false;
       }
-      // Consume the '+', treat as space for subsequent parsing
-      ch = ' ';
+      ch = ' '; // consume '+'
+    } else if (solver->internal->xor_clause_flag && lit) {
+      // A literal without '+' after it: marks end of current XOR block.
+      // The current literal is part of this block, so block ends AFTER it.
+      int block_end = (int) solver->internal->original.size () -
+                      solver->internal->mixed_clause_start + 1;
+      if (solver->internal->mixed_block_offsets.empty ()) {
+        // First block ending: record its end position
+        if (block_end > 0)
+          solver->internal->mixed_block_offsets.push_back (block_end);
+      } else if (block_end > solver->internal->mixed_block_offsets.back ()) {
+        // Subsequent block ending → multi-block mixed confirmed
+        solver->internal->mixed_block_offsets.push_back (block_end);
+        solver->internal->mixed_clause_flag = true;
+      }
     }
 
     if (ch == 'c') {

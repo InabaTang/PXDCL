@@ -125,10 +125,6 @@ Clause *Internal::new_clause (bool red, int glue) {
     c->mixed_w2 = 1;
     c->mixed_num_blocks = num_blocks;
     c->mixed_parity = 0;
-    // Copy block offsets after the literals
-    int *offsets = c->block_offsets ();
-    for (int i = 0; i < num_blocks; i++)
-      offsets[i] = mixed_block_offsets[i];
   } else {
     c->mixed_flag = 0;
     if (xor_clause_flag) c->xor_flag = true;
@@ -145,6 +141,13 @@ Clause *Internal::new_clause (bool red, int glue) {
   {
     //if (c->xor_flag) printf("%d : %d \n",i,clause[i]);
     c->literals[i] = clause[i];
+  }
+
+  // Copy block offsets AFTER literals and AFTER c->size is set
+  if (c->mixed_flag && num_blocks > 0) {
+    int *offsets = c->block_offsets ();
+    for (int i = 0; i < num_blocks; i++)
+      offsets[i] = mixed_block_offsets[i];
   }
 
   // Just checking that we did not mess up our sophisticated memory layout.
@@ -641,9 +644,10 @@ void Internal::add_new_original_clause (int64_t id) {
         assign_original_unit (new_id, lit);
       }
     } else {
-      move_literals_to_watch ();
+      if (!is_mixed)
+        move_literals_to_watch ();
 #ifndef NDEBUG
-      if (!is_xor) check_watched_literal_invariants ();
+      if (!is_xor && !is_mixed) check_watched_literal_invariants ();
 #endif
       //Find : Add clause lit
       int glue = (int) (learned_levels.size () + unassigned);

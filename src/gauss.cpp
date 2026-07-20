@@ -214,6 +214,7 @@ int Internal::gauss_elimination()
         for (int row = 0 ; row < rows; row++)
         {
             Clause *c = xor_clauses[xor_kdd[ca][row]];
+            int neg_count = 0;
             for (int i = 0 ; i < c->size; i ++)
             {
                 int lit = c->literals[i];
@@ -221,8 +222,10 @@ int Internal::gauss_elimination()
                 assert(abs(lit) <= upper_metis);
                 mzd_write_bit(mat, row, abs(lit) - now_metis - 1, 1);
                 assert(abs(lit) - now_metis - 1 >= 0);
+                if (lit < 0) neg_count++;
             }
-            mzd_write_bit(mat, row, cols - 1, 1);
+            // XOR(l1..ln)=TRUE → Σxi = 1 ⊕ (neg_count % 2)
+            mzd_write_bit(mat, row, cols - 1, (neg_count % 2) ? 0 : 1);
         }
         // printf("Matrix %dx%d:\n", mat->nrows, mat->ncols);
         // for (int row = 0; row < mat->nrows; row++) {
@@ -299,12 +302,15 @@ int Internal::gauss_old_elimination()
     for (int row = 0 ; row < rows; row++)
     {
         Clause *c = xor_clauses[row];
+        int neg_count = 0;
         for (int i = 0 ; i < c->size; i ++)
         {
             int lit = c->literals[i];
             mzd_write_bit(mat, row, abs(lit) - 1, 1);
+            if (lit < 0) neg_count++;
         }
-        mzd_write_bit(mat, row, cols - 1, 1);
+        // XOR(l1..ln)=TRUE → Σxi = 1 ⊕ (neg_count % 2)
+        mzd_write_bit(mat, row, cols - 1, (neg_count % 2) ? 0 : 1);
     }
     mzd_echelonize(mat, true);
 
