@@ -476,7 +476,12 @@ bool Internal::propagate () {
 
     //printf("xor_propagations end\n");
 
-    // ── Mixed XOR+OR Clause Propagation (Plan C: track lost watches) ──
+    // ── Mixed XOR+OR Clause Propagation ──
+    // Each mixed clause is OR of XOR blocks. At least one block must
+    // have odd parity (XOR=TRUE). The two-watch scheme works like OR
+    // clauses: when a watched literal is assigned, try to move the
+    // watch. If all literals are assigned and no block has odd parity,
+    // it's a conflict.
     if (false && !conflict && !mixed_tab.empty ()) {
       Watches &mws = mixed_watches (abs (lit));
       const const_watch_iterator meow = mws.end ();
@@ -487,34 +492,21 @@ bool Internal::propagate () {
         Watch w = *mj++ = *mi++;
         Clause *c = w.clause;
 
-        if (c->garbage || !c->mixed_flag) {
-          mj--;
-          continue;
-        }
-
-        // Verify watched positions are valid
+        if (c->garbage || !c->mixed_flag) { mj--; continue; }
         if (c->mixed_w1 < 0 || c->mixed_w1 >= c->size ||
             c->mixed_w2 < 0 || c->mixed_w2 >= c->size) {
-          // Watch positions corrupted; schedule reconnect and skip
-          schedule_mixed_reconnect (c);
-          mj--;
-          continue;
+          schedule_mixed_reconnect (c); mj--; continue;
         }
 
+        // Ensure triggering literal matches one of the watched literals
         const int lit_w1 = c->literals[c->mixed_w1];
         const int lit_w2 = c->literals[c->mixed_w2];
-
-        // Ensure the triggering literal is one of the watched ones
         if (abs (lit_w1) != abs (lit) && abs (lit_w2) != abs (lit)) {
-          // This watch is on the wrong literal's list; remove it
-          schedule_mixed_reconnect (c);
-          mj--;
-          continue;
+          schedule_mixed_reconnect (c); mj--; continue;
         }
 
         // Make abs(lit) the w2 position for consistency
         if (abs (lit_w1) == abs (lit)) {
-          // Swap w1 and w2
           int tmp = c->mixed_w1;
           c->mixed_w1 = c->mixed_w2;
           c->mixed_w2 = tmp;
@@ -525,163 +517,76 @@ bool Internal::propagate () {
         const int l2 = c->literals[w2];
         assert (abs (l2) == abs (lit));
 
-        // Check if w2 is still unassigned (can happen if we watch both signs)
-        if (!val (l2)) {
-          // w2 unassigned, nothing to do
+        // If w2 is unassigned, nothing to do
+        if (!val (l2)) continue;
+
+        // w2 is assigned. Check all blocks for satisfaction.
+        const int *offsets = c->block_offsets ();
+        const int nb = c->mixed_num_blocks;
+        bool any_satisfied = false;
+        for (int bi = 0; bi < nb; bi++) {
+          int bs = (bi == 0) ? 0 : offsets[bi - 1];
+          int be = offsets[bi];
+          bool parity = false;
+          bool all_assigned = true;
+          for (int j = bs; j < be; j++) {
+            int v = val (c->literals[j]);
+            if (!v) { all_assigned = false; break; }
+            if (v > 0) parity = !parity;
+          }
+          if (all_assigned && parity) { any_satisfied = true; break; }
+        }
+        if (any_satisfied) continue; // clause SAT
+
+        // Try to move w2 to an unassigned literal
+        bool moved = false;
+        for (int k = w2 + 1; k < c->size; k++) {
+          if (k != w1 && !val (c->literals[k])) {
+            c->mixed_w2 = k;
+            watch_mixed_literal (c->literals[k], l1, c);
+            schedule_mixed_reconnect (c); mj--;
+            moved = true; break;
+          }
+        }
+        if (moved) continue;
+        for (int k = 0; k < c->size; k++) {
+          if (k != w1 && k != w2 && !val (c->literals[k])) {
+            c->mixed_w2 = k;
+            watch_mixed_literal (c->literals[k], l1, c);
+            schedule_mixed_reconnect (c); mj--;
+            moved = true; break;
+          }
+        }
+        if (moved) continue;
+
+        // No unassigned replacement found. But w1 itself might be
+        // unassigned — in that case, all OTHER literals are assigned.
+        // Double-check: count truly unassigned literals.
+        int unassigned_count = 0;
+        int last_unassigned = -1;
+        for (int k = 0; k < c->size; k++) {
+          if (!val (c->literals[k])) {
+            unassigned_count++;
+            last_unassigned = k;
+          }
+        }
+
+        if (unassigned_count > 0) {
+          // Unassigned literals remain but we couldn't watch them.
+          // Schedule reconnect to fix watches on backtrack.
+          schedule_mixed_reconnect (c); mj--;
           continue;
         }
 
-        // w2 is assigned. Check the situation properly.
-        {
-          const int *offsets = c->block_offsets ();
-          int nb = c->mixed_num_blocks;
-
-          // First: check if any block is satisfied (all assigned + odd parity)
-          bool any_block_satisfied = false;
-          int unsatisfied_block = -1;
-          for (int bi = 0; bi < nb; bi++) {
-            int bs = (bi == 0) ? 0 : offsets[bi - 1];
-            int be = offsets[bi];
-            bool parity = false;
-            bool all_assigned = true;
-            for (int j = bs; j < be; j++) {
-              int v = val (c->literals[j]);
-              if (!v) { all_assigned = false; break; }
-              if (v > 0) parity = !parity;
-            }
-            if (all_assigned && parity) {
-              any_block_satisfied = true;
-              break;
-            }
-            if (all_assigned && !parity) {
-              unsatisfied_block = bi;
-            }
-          }
-
-          if (any_block_satisfied) {
-            // Clause satisfied; keep watching
-            continue;
-          }
-
-          // Try to find a replacement for w2: move_w2_forward
-          bool found_replacement = false;
-          for (int k = w2 + 1; k < c->size; k++) {
-            if (k != w1 && !val (c->literals[k])) {
-              c->mixed_w2 = k;
-              watch_mixed_literal (c->literals[k], c->literals[w1], c);
-              schedule_mixed_reconnect (c);
-              mj--;
-              found_replacement = true;
-              break;
-            }
-          }
-          if (found_replacement) continue;
-
-          // Full sweep
-          for (int k = 0; k < c->size; k++) {
-            if (k != w1 && k != w2 && !val (c->literals[k])) {
-              c->mixed_w2 = k;
-              watch_mixed_literal (c->literals[k], c->literals[w1], c);
-              schedule_mixed_reconnect (c);
-              mj--;
-              found_replacement = true;
-              break;
-            }
-          }
-          if (found_replacement) continue;
-
-          // All literals assigned, no replacement found
-          // Check if w1 is unassigned → unit propagation
-          if (!val(l1)) {
-            // Find w1's block and check if rest of block is assigned
-            int w1_block = -1;
-            for (int bi = 0; bi < nb; bi++) {
-              int bs = (bi == 0) ? 0 : offsets[bi - 1];
-              int be = offsets[bi];
-              if (w1 >= bs && w1 < be) { w1_block = bi; break; }
-            }
-            if (w1_block < 0) { schedule_mixed_reconnect(c); mj--; continue; }
-
-            int bs = (w1_block == 0) ? 0 : offsets[w1_block - 1];
-            int be = offsets[w1_block];
-            bool parity_without = false;
-            bool all_rest_assigned = true;
-            for (int j = bs; j < be; j++) {
-              if (j == w1) continue;
-              int v = val(c->literals[j]);
-              if (!v) { all_rest_assigned = false; break; }
-              if (v > 0) parity_without = !parity_without;
-            }
-
-            if (!all_rest_assigned) {
-              schedule_mixed_reconnect(c); mj--; continue;
-            }
-            if (parity_without) {
-              // Rest of block already has odd parity → block SAT
-              // (w1 can be set FALSE to preserve odd parity)
-              continue;
-            }
-            // Rest has even parity → w1 must be TRUE for odd parity
-            build_chain_for_units(l1, c, 0);
-            search_assign(l1, c);
-            ticks++;
-            schedule_mixed_reconnect(c);
-            mj--;
-          } else if (val(l1) < 0) {
-            // w1 falsified, everything assigned, no block satisfied → CONFLICT
-            conflict = c;
-            stats.mixed_conflicts++;
-            break;
-          }
-          // else val(l1) > 0: w1 true but block not satisfied (need all assigned)
-          // since everything is assigned, this means w1's block has even parity
-          // → check for conflict as above
-          else {
-            // w1 true, everything assigned, no block satisfied → CONFLICT
-            // (w1 being true doesn't guarantee its block has odd parity)
-            conflict = c;
-            stats.mixed_conflicts++;
-            break;
-          }
-        }
+        // All literals assigned, no block has odd parity → CONFLICT
+        conflict = c;
+        stats.mixed_conflicts++;
+        break;
       }
 
       if (mj != mi) {
-        while (mi != meow)
-          *mj++ = *mi++;
+        while (mi != meow) *mj++ = *mi++;
         mws.resize (mj - mws.begin ());
-      }
-    }
-
-    // Recover lost watches: ensure clauses in lost_mixed_watches have ≥1 watch
-    for (auto c : lost_mixed_watches) {
-      if (!c || c->garbage || !c->mixed_flag) continue;
-      int wcnt = 0;
-      for (int i = 0; i < c->size; i++) {
-        for (auto &w : mixed_watches (c->literals[i]))
-          if (w.clause == c) wcnt++;
-      }
-      if (wcnt < 2) {
-        // Find two unassigned or satisfied literals to watch
-        int nw1 = -1, nw2 = -1;
-        for (int i = 0; i < c->size; i++) {
-          int v = val (c->literals[i]);
-          if (v > 0) continue; // TRUE literal
-          if (!v) { // unassigned
-            if (nw1 < 0) nw1 = i;
-            else if (nw2 < 0) { nw2 = i; break; }
-          }
-        }
-        if (nw2 < 0) {
-          // Only one unassigned: use any position as second watch
-          for (int i = 0; i < c->size; i++)
-            if (i != nw1) { nw2 = i; break; }
-        }
-        if (nw1 >= 0 && nw2 >= 0) {
-          c->mixed_w1 = nw1; c->mixed_w2 = nw2;
-          watch_mixed_literal (c->literals[nw1], c->literals[nw2], c);
-          watch_mixed_literal (c->literals[nw2], c->literals[nw1], c);
-        }
       }
     }
 
