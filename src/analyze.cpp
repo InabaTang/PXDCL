@@ -670,9 +670,11 @@ inline int Internal::find_conflict_level (int &forced) {
   const int size = conflict->size;
   int *lits = conflict->literals;
 
-  // Skip reordering for mixed clauses: block offsets must be preserved
+  // Skip reordering for mixed clauses: block offsets must be preserved.
+  // forced was correctly computed by the loop above; preserve it.
+  // If only one literal at the highest decision level, it can drive.
   if (conflict->mixed_flag) {
-    forced = 0;
+    if (count != 1) forced = 0;
     return res;
   }
 
