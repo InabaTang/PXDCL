@@ -934,6 +934,24 @@ int App::main (int argc, char **argv) {
         if (!satisfied) {
           violations++;
           mixed_violations++;
+          if (mixed_violations <= 5) {
+            // Check if this clause has watches
+            int watch_count = 0;
+            for (int i = 0; i < c->size; i++) {
+              for (auto &w : internal->mixed_watches (c->literals[i]))
+                if (w.clause == c) watch_count++;
+            }
+            solver->message ("  VIOLATED mixed: size=%d blocks=%d watches=%d w1=%d w2=%d",
+                             c->size, nb, watch_count, c->mixed_w1, c->mixed_w2);
+            for (int bi = 0; bi < nb && bi < 4; bi++) {
+              int bs = (bi == 0) ? 0 : offsets[bi - 1];
+              int be = offsets[bi];
+              solver->message ("    Block %d: bs=%d be=%d", bi, bs, be);
+              for (int j = bs; j < be && j < bs + 5; j++)
+                solver->message ("      lit %d: val=%d", c->literals[j],
+                                 solver->val (c->literals[j]));
+            }
+          }
         }
       } else if (c->xor_flag) {
         // XOR clause: odd number of TRUE literals

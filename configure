@@ -428,7 +428,7 @@ then
     base="$1"
     # 查找头文件：常见位置
     for inc in \
-      "$base/include/m4ri.h" \
+      "$base/include/m4ri/m4ri.h" \
       "$base/m4ri.h" \
       "$base/src/m4ri.h" \
       "$base/m4ri/m4ri.h" \
