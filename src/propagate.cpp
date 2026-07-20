@@ -520,6 +520,13 @@ bool Internal::propagate () {
         const int l2 = c->literals[w2];
         assert (abs (l2) == abs (lit));
 
+        // Circular reasoning guard (same pattern as XOR watches):
+        // If l1 was propagated by this same mixed clause, skip.
+        if (val (l1) && var (l1).reason &&
+            var (l1).reason->mixed_flag &&
+            var (l1).reason == c)
+          continue;
+
         // If w2 is unassigned, nothing to do (watch still valid)
         if (!val (l2)) continue;
 
