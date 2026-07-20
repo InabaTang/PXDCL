@@ -794,7 +794,9 @@ void Internal::preprocess_quickly (bool always) {
          "starting with %" PRId64 " variables and %" PRId64 " clauses",
          before.vars, before.clauses);
 
-  if (extract_gates (true))
+  // extract_gates() on mixed clauses is extremely expensive (4096 clauses
+  // with hundreds of variables each).  Skip it when mixed clauses exist.
+  if (mixed_clauses.empty () && extract_gates (true))
     decompose ();
   binary_clauses_backbone ();
 
@@ -1043,6 +1045,7 @@ int Internal::solve (bool preprocess_only) { // Find : Internal solve
   if (!mixed_clauses.empty ()) {
     build_var_to_mixed_index ();
     mixed_clause_counter.resize (mixed_clauses.size (), 0);
+  }
   // DEBUG: dump all clauses with their types (commented out)
   // printf("c === Clause Dump: %zu binary+ clauses ===\n", clauses.size());
   // for (size_t ci = 0; ci < clauses.size(); ci++) { ... }
