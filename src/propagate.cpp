@@ -477,12 +477,15 @@ bool Internal::propagate () {
     //printf("xor_propagations end\n");
 
     // ── Mixed XOR+OR Clause Propagation ──
-    // Each mixed clause is OR of XOR blocks. At least one block must
-    // have odd parity (XOR=TRUE). The two-watch scheme works like OR
-    // clauses: when a watched literal is assigned, try to move the
-    // watch. If all literals are assigned and no block has odd parity,
-    // it's a conflict.
-    if (false && !conflict && !mixed_tab.empty ()) {
+    // Mixed clause = OR of XOR blocks. Block i is SAT iff all its literals
+    // are assigned and the number of TRUE literals is odd (XOR=TRUE).
+    // The clause is SAT iff at least one block is SAT.
+    //
+    // Two-watch scheme: when a watched literal is assigned, try to move
+    // the watch. If all literals are assigned and no block is SAT → CONFLICT.
+    // If exactly one literal is unassigned and all other blocks are falsified
+    // → UNIT propagation (the last block must be satisfied).
+    if (!conflict && !mixed_tab.empty ()) {
       Watches &mws = mixed_watches (abs (lit));
       const const_watch_iterator meow = mws.end ();
       watch_iterator mj = mws.begin ();
@@ -498,14 +501,14 @@ bool Internal::propagate () {
           schedule_mixed_reconnect (c); mj--; continue;
         }
 
-        // Ensure triggering literal matches one of the watched literals
+        // Verify the triggering literal matches a watched literal
         const int lit_w1 = c->literals[c->mixed_w1];
         const int lit_w2 = c->literals[c->mixed_w2];
         if (abs (lit_w1) != abs (lit) && abs (lit_w2) != abs (lit)) {
           schedule_mixed_reconnect (c); mj--; continue;
         }
 
-        // Make abs(lit) the w2 position for consistency
+        // Make abs(lit) the w2 position
         if (abs (lit_w1) == abs (lit)) {
           int tmp = c->mixed_w1;
           c->mixed_w1 = c->mixed_w2;
@@ -517,13 +520,14 @@ bool Internal::propagate () {
         const int l2 = c->literals[w2];
         assert (abs (l2) == abs (lit));
 
-        // If w2 is unassigned, nothing to do
+        // If w2 is unassigned, nothing to do (watch still valid)
         if (!val (l2)) continue;
 
         // w2 is assigned. Check all blocks for satisfaction.
         const int *offsets = c->block_offsets ();
         const int nb = c->mixed_num_blocks;
         bool any_satisfied = false;
+        int falsified_count = 0;
         for (int bi = 0; bi < nb; bi++) {
           int bs = (bi == 0) ? 0 : offsets[bi - 1];
           int be = offsets[bi];
@@ -535,8 +539,9 @@ bool Internal::propagate () {
             if (v > 0) parity = !parity;
           }
           if (all_assigned && parity) { any_satisfied = true; break; }
+          if (all_assigned && !parity) falsified_count++;
         }
-        if (any_satisfied) continue; // clause SAT
+        if (any_satisfied) continue; // clause already SAT
 
         // Try to move w2 to an unassigned literal
         bool moved = false;
@@ -559,26 +564,56 @@ bool Internal::propagate () {
         }
         if (moved) continue;
 
-        // No unassigned replacement found. But w1 itself might be
-        // unassigned — in that case, all OTHER literals are assigned.
-        // Double-check: count truly unassigned literals.
+        // No replacement found. Count unassigned literals.
         int unassigned_count = 0;
-        int last_unassigned = -1;
+        int unassigned_pos = -1;
         for (int k = 0; k < c->size; k++) {
           if (!val (c->literals[k])) {
             unassigned_count++;
-            last_unassigned = k;
+            unassigned_pos = k;
           }
         }
 
-        if (unassigned_count > 0) {
-          // Unassigned literals remain but we couldn't watch them.
-          // Schedule reconnect to fix watches on backtrack.
+        if (unassigned_count == 1) {
+          // Exactly one unassigned literal → UNIT propagation.
+          // Since no block is SAT (any_satisfied=false), all other
+          // (fully-assigned) blocks must be FALSIFIED. The block containing
+          // the unassigned literal MUST be satisfied.
+          int ublock = -1;
+          for (int bi = 0; bi < nb; bi++) {
+            int bs = (bi == 0) ? 0 : offsets[bi - 1];
+            int be = offsets[bi];
+            if (unassigned_pos >= bs && unassigned_pos < be)
+              { ublock = bi; break; }
+          }
+          if (ublock >= 0) {
+            int bs = (ublock == 0) ? 0 : offsets[ublock - 1];
+            int be = offsets[ublock];
+            bool parity_rest = false;
+            for (int j = bs; j < be; j++) {
+              if (j == unassigned_pos) continue;
+              if (val (c->literals[j]) > 0) parity_rest = !parity_rest;
+            }
+            // XOR=TRUE: odd parity needed.
+            // parity_rest=odd → need FALSE → imply -lit
+            // parity_rest=even → need TRUE → imply +lit
+            int ulit = c->literals[unassigned_pos];
+            int implied = parity_rest ? -ulit : ulit;
+            build_chain_for_units (implied, c, 0);
+            search_assign (implied, c);
+            ticks++;
+            schedule_mixed_reconnect (c); mj--;
+            continue;
+          }
+        }
+
+        if (unassigned_count > 1) {
+          // Multiple unassigned but we can't watch them → fix on backtrack
           schedule_mixed_reconnect (c); mj--;
           continue;
         }
 
-        // All literals assigned, no block has odd parity → CONFLICT
+        // unassigned_count == 0: all assigned, no block SAT → CONFLICT
         conflict = c;
         stats.mixed_conflicts++;
         break;

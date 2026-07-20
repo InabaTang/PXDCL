@@ -222,42 +222,43 @@ void Internal::backtrack_without_updating_phases (int new_level) {
         }
       }
 
-      // Find two unassigned literals to watch
+      // Find two literals to watch: prefer unassigned, then FALSE, then TRUE
       int w1 = -1, w2 = -1;
-      bool has_true = false;
+      // First pass: unassigned literals
       for (int i = 0; i < c->size; i++) {
-        int v = val (c->literals[i]);
-        if (v > 0) {
-          has_true = true;
-          continue;
-        }
-        if (!v) {
-          // Unassigned
+        if (!val (c->literals[i])) {
           if (w1 < 0) w1 = i;
           else if (w2 < 0) { w2 = i; break; }
         }
       }
-
-      // If only one unassigned, use a TRUE literal as second watch
-      if (w1 >= 0 && w2 < 0 && has_true) {
+      // Second pass: FALSE literals
+      if (w2 < 0) {
         for (int i = 0; i < c->size; i++) {
+          if (i == w1) continue;
+          if (val (c->literals[i]) < 0) {
+            if (w1 < 0) w1 = i;
+            else if (w2 < 0) { w2 = i; break; }
+          }
+        }
+      }
+      // Third pass: TRUE literals (clause is SAT, but we still need watches)
+      if (w2 < 0) {
+        for (int i = 0; i < c->size; i++) {
+          if (i == w1) continue;
           if (val (c->literals[i]) > 0) {
-            w2 = i;
-            break;
+            if (w1 < 0) w1 = i;
+            else if (w2 < 0) { w2 = i; break; }
           }
         }
       }
-      // If still only one, use any FALSE literal as second watch
-      if (w1 >= 0 && w2 < 0) {
-        for (int i = 0; i < c->size; i++) {
-          if (i != w1) {
-            w2 = i;
-            break;
-          }
-        }
+      // Fallback: any two distinct positions
+      if (w2 < 0 && w1 >= 0) {
+        for (int i = 0; i < c->size; i++)
+          if (i != w1) { w2 = i; break; }
       }
+      if (w1 < 0) { w1 = 0; w2 = 1; } // absolute fallback
 
-      if (w1 >= 0 && w2 >= 0) {
+      if (w1 >= 0 && w2 >= 0 && w1 != w2) {
         c->mixed_w1 = w1;
         c->mixed_w2 = w2;
         const int l0 = c->literals[w1];
