@@ -84,7 +84,7 @@ inline const char *Parser::parse_lit (int &ch, int &lit, int &vars,
   }
   if (ch == '\r')
     ch = parse_char ();
-  if (ch != 'c' && ch != ' ' && ch != '\t' && ch != '\n' && ch != EOF)
+  if (ch != 'c' && ch != ' ' && ch != '\t' && ch != '\n' && ch != EOF && ch != '+')
     PER ("expected white space after '%d'", sign * lit);
   if (lit > vars) {
     if (strict != FORCED)
@@ -154,9 +154,55 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) { //Find :
   }
 
   // Now read 'p cnf <var> <clauses>' header of DIMACS file
+  // or 'p xnf <var> <clauses>' header of XNF file
   // or 'p inccnf' of incremental 'INCCNF' file.
   //
-  if (ch == 'c') {
+  if (ch == 'x') {
+    // 'p xnf' format (XOR Normal Form)
+    if (parse_char () != 'n')
+      PER ("expected 'n' after 'p x'");
+    if (parse_char () != 'f')
+      PER ("expected 'f' after 'p xn'");
+    ch = parse_char ();
+    if (!isspace (ch))
+      PER ("expected space after 'p xnf'");
+    do
+      ch = parse_char ();
+    while (isspace (ch));
+    if (!isdigit (ch))
+      PER ("expected digit after 'p xnf '");
+    const char *err = parse_positive_int (ch, vars, "<max-var>");
+    if (err)
+      return err;
+    if (!isspace (ch))
+      PER ("expected space after 'p xnf %d'", vars);
+    do
+      ch = parse_char ();
+    while (isspace (ch));
+    if (!isdigit (ch))
+      PER ("expected digit after 'p xnf %d '", vars);
+    err = parse_positive_uint64_t (ch, clauses, "<num-clauses>");
+    if (err)
+      return err;
+    while (ch != '\n') {
+      if (ch != '\r' && !isspace (ch))
+        PER ("expected new-line after 'p xnf %d %" PRIu64 "'", vars,
+             clauses);
+      ch = parse_char ();
+    }
+
+    MSG ("found %s'p xnf %d %" PRIu64 "'%s header", tout.green_code (),
+         vars, clauses, tout.normal_code ());
+
+    if (vars) {
+      assert (vars > 0);
+      solver->resize (vars);
+      declared = vars;
+    }
+
+    internal->reserve_ids (clauses);
+
+  } else if (ch == 'c') {
     assert (!found_inccnf_header);
     if (strict == STRICT) {
       const char *err = parse_string ("nf ", 'c');
@@ -283,6 +329,19 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) { //Find :
     const char *err = parse_lit (ch, lit, vars, strict);
     if (err)
       return err;
+
+    // Mixed clause handling: check for '+' (XOR within block)
+    // Treat single-block '+' clauses as pure XOR clauses
+    if (ch == '+') {
+      if (!solver->internal->xor_clause_flag) {
+        // First '+' → treat as XOR clause prefix (like 'x')
+        solver->internal->xor_clause_flag = true;
+        solver->internal->xor_clause_number++;
+      }
+      // Consume the '+', treat as space for subsequent parsing
+      ch = ' ';
+    }
+
     if (ch == 'c') {
       while ((ch = parse_char ()) != '\n')
         if (ch == EOF)

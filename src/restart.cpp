@@ -135,6 +135,7 @@ int Internal::reuse_trail () {
   if (!opts.restartreusetrail)
     return trivial_decisions;
   int next_decision = next_decision_variable ();
+  if (!next_decision) return trivial_decisions;
   assert (1 <= next_decision);
   int res = trivial_decisions;
   if (use_scores ()) {

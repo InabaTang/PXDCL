@@ -352,12 +352,34 @@ inline void Internal::analyze_reason (int lit, Clause *reason, int &open,
     for (const auto &other : *reason)
       if (abs(other) != abs(lit))
       {
-        // int k = other;
-        // if (val(k) > 0) k = -k;
-        // assert(val(k) != 0);
-        // assert(val(other) < 0);
         analyze_literal (other, open, resolvent_size, antecedent_size);
       }
+  }
+  else if (reason->mixed_flag)
+  {
+    // Mixed clause reason analysis: flip TRUE literals to negative (XOR-style)
+    // The OR of XOR blocks: when all literals are false, the clause is false.
+    // Flipping val>0 literals to negative is sound for conflict analysis.
+    vector<int> flipped;
+    flipped.reserve (reason->size);
+    for (const auto &other : *reason) {
+      int v = val (other);
+      if (v > 0) flipped.push_back (-other);
+      else if (v < 0) flipped.push_back (other);
+      else flipped.push_back (other); // unassigned (shouldn't happen in reason)
+    }
+    // Sort and dedup to handle cross-block duplicates
+    sort (flipped.begin (), flipped.end (),
+          [](int a, int b) { return abs (a) < abs (b)
+                             || (abs (a) == abs (b) && a < b); });
+    int last = 0;
+    for (const auto &other : flipped) {
+      if (abs (other) == abs (lit)) continue;
+      if (last && other == last) continue;
+      if (flags (other).seen) continue;
+      last = other;
+      analyze_literal (other, open, resolvent_size, antecedent_size);
+    }
   }
   else
   {
@@ -648,6 +670,12 @@ inline int Internal::find_conflict_level (int &forced) {
   const int size = conflict->size;
   int *lits = conflict->literals;
 
+  // Skip reordering for mixed clauses: block offsets must be preserved
+  if (conflict->mixed_flag) {
+    forced = 0;
+    return res;
+  }
+
   // Move the two highest level literals to the front.
   //
   for (int i = 0; i < 2; i++) {
@@ -681,6 +709,9 @@ inline int Internal::find_conflict_level (int &forced) {
       {
         //do nothing
       }
+      else if (conflict->mixed_flag) {
+        remove_mixed_watch (mixed_watches (lit), conflict);
+      }
       else if (conflict->xor_flag) {
         remove_watch (xor_watches (lit), conflict);
       } else {
@@ -697,7 +728,9 @@ inline int Internal::find_conflict_level (int &forced) {
       {
         //do nothing
       }
-      else if (conflict->xor_flag) {
+      else if (conflict->mixed_flag) {
+        watch_mixed_literal (highest_literal, lits[!i], conflict);
+      } else if (conflict->xor_flag) {
         watch_xor_literal (highest_literal, lits[!i], conflict);
       } else {
         watch_literal (highest_literal, lits[!i], conflict);

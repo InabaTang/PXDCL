@@ -65,6 +65,7 @@ int Internal::clause_contains_xor_fixed_literal (Clause *c) {
 
 void Internal::remove_falsified_literals (Clause *c) {
   if (c->xor_flag) return ;
+  if (c->mixed_flag) return ;  // Mixed clauses: block offsets must be preserved
   const const_literal_iterator end = c->end ();
   const_literal_iterator i;
   int num_non_false = 0;
@@ -108,6 +109,10 @@ void Internal::mark_satisfied_clauses_as_garbage () {
   for (const auto &c : clauses) {
     if (c->garbage)
       continue;
+    if (c->mixed_flag) {
+      // Mixed clauses: skip simplification to preserve block offsets
+      continue;
+    }
     if (c->xor_flag)
     {
       const int tmp = clause_contains_xor_fixed_literal(c);
@@ -298,6 +303,34 @@ inline void Internal::flush_xor_watches (int lit, Watches &saved)
   shrink_vector (xws);
 }
 
+inline void Internal::flush_mixed_watches (int lit, Watches &saved) {
+  assert (saved.empty ());
+  Watches &mws = mixed_watches (lit);
+  const const_watch_iterator end = mws.end ();
+  watch_iterator j = mws.begin ();
+  const_watch_iterator i;
+  for (i = j; i != end; i++) {
+    Watch w = *i;
+    Clause *c = w.clause;
+    if (c->collect ()) continue;
+    if (!c->mixed_flag) continue;
+    if (c->moved) c = w.clause = c->copy;
+    // Validate watch positions
+    if (c->mixed_w1 < 0 || c->mixed_w1 >= c->size) continue;
+    if (c->mixed_w2 < 0 || c->mixed_w2 >= c->size) continue;
+    w.size = c->size;
+    const int new_blit_pos = (c->literals[c->mixed_w1] == lit)
+                               ? c->mixed_w2 : c->mixed_w1;
+    w.blit = c->literals[new_blit_pos];
+    if (w.binary ()) *j++ = w;
+    else saved.push_back (w);
+  }
+  mws.resize (j - mws.begin ());
+  for (const auto &w : saved) mws.push_back (w);
+  saved.clear ();
+  shrink_vector (mws);
+}
+
 void Internal::flush_all_occs_and_watches () {
   if (occurring ())
     for (auto idx : vars)
@@ -308,7 +341,8 @@ void Internal::flush_all_occs_and_watches () {
     for (auto idx : vars)
     {
       flush_watches (idx, tmp), flush_watches (-idx, tmp);
-      flush_xor_watches(idx, tmp);
+      flush_xor_watches (idx, tmp);
+      flush_mixed_watches (idx, tmp), flush_mixed_watches (-idx, tmp);
     }
   }
 }
@@ -357,6 +391,12 @@ void Internal::delete_garbage_clauses () {
     Clause *c = long_xor_clauses[ci];
     if (c && c->garbage)
       long_xor_clauses[ci] = nullptr;
+  }
+  // Mixed clauses: null out garbage references
+  for (size_t ci = 0; ci < mixed_clauses.size (); ci++) {
+    Clause *c = mixed_clauses[ci];
+    if (c && c->garbage)
+      mixed_clauses[ci] = nullptr;
   }
 
   LOG ("deleting garbage clauses");
@@ -476,6 +516,11 @@ void Internal::copy_non_garbage_clauses () {
           if (!w.clause->moved && !w.clause->collect ())
             copy_clause (w.clause);
         }
+        for (const auto &w : mixed_watches(sign))
+        {
+          if (!w.clause->moved && !w.clause->collect ())
+            copy_clause (w.clause);
+        }
       }
     }
   } else {
@@ -495,10 +540,14 @@ void Internal::copy_non_garbage_clauses () {
             copy_clause (w.clause);
 
     for (int sign = -1; sign <= 1; sign += 2)
-      for (int idx = queue.last; idx; idx = link (idx).prev)
+      for (int idx = queue.last; idx; idx = link (idx).prev) {
         for (const auto &w : xor_watches(sign))
           if (!w.clause->moved && !w.clause->collect ())
             copy_clause (w.clause);
+        for (const auto &w : mixed_watches(sign))
+          if (!w.clause->moved && !w.clause->collect ())
+            copy_clause (w.clause);
+      }
   }
 
   // Do not forget to move clauses which are not watched, which happened in
@@ -520,6 +569,15 @@ void Internal::copy_non_garbage_clauses () {
       long_xor_clauses[ci] = nullptr;
     else if (c->moved)
       long_xor_clauses[ci] = c->copy;
+  }
+  // Mixed clauses: update pointers to moved clauses
+  for (size_t ci = 0; ci < mixed_clauses.size (); ci++) {
+    Clause *c = mixed_clauses[ci];
+    if (c == nullptr) continue;
+    if (c->garbage)
+      mixed_clauses[ci] = nullptr;
+    else if (c->moved)
+      mixed_clauses[ci] = c->copy;
   }
 
   // Replace and flush clause references in 'clauses'.

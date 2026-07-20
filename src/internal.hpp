@@ -248,6 +248,7 @@ struct Internal {
   vector<Bins> big;             // binary implication graph
   vector<Watches> wtab;         // table of watches for all literals
   vector<XorWatches> xor_tab;
+  vector<Watches> mixed_tab;     // dedicated watch table for mixed clauses
   Clause *conflict;            // set in 'propagation', reset in 'analyze'
   Clause *ignore;              // ignored during 'vivify_propagate'
   Clause *dummy_binary;        // Dummy binary clause for subsumption
@@ -343,6 +344,11 @@ struct Internal {
   bool decide_flag_debug;
   Clause *xor_decide_clause;
 
+  // for mixed XOR+OR clause parsing
+  int mixed_clause_flag;           // parsing: current clause is mixed
+  vector<int> mixed_block_offsets; // parsing: block boundary positions
+  int mixed_clause_start;          // parsing: start position in original
+
   bool segaing();
   void sega();
   void bump_near_full_xor();      // boost scores for near-full XOR clauses
@@ -354,6 +360,16 @@ struct Internal {
   // for xor gauss
   int xor_clause_number; // not include gauss clause
   vector<Clause *> xor_clauses;
+
+  // for mixed XOR+OR clauses
+  struct MixedVarRef { int ci; int bi; int clause_lit; };
+  vector<vector<MixedVarRef>> var_to_mixed; // var → clause parity index
+  vector<Clause *> mixed_clauses;           // all mixed clauses
+
+  // Watch-loss tracking (Plan C): set of mixed clauses that lost watches
+  // during propagation and need re-watching on backtrack.
+  vector<Clause *> lost_mixed_watches;
+  void schedule_mixed_reconnect (Clause *c);
 
   // for SEGA: lazy evaluation of long XOR clauses (size > 5)
   // Each clause has a counter incremented when its literals are assigned.
@@ -542,6 +558,7 @@ struct Internal {
   int64_t &noccs (int lit) { return ntab[vlit (lit)]; }
   Watches &watches (int lit) { return wtab[vlit (lit)]; }
   XorWatches &xor_watches (int lit) { return xor_tab[vlit (abs (lit))]; }
+  Watches &mixed_watches (int lit) { return mixed_tab[vlit (abs (lit))]; }
 
 
   // Variable bumping through exponential VSIDS (EVSIDS) as in MiniSAT.
@@ -713,6 +730,12 @@ struct Internal {
     LOG (c, "watch xor %d blit %d in", lit, blit);
   }
 
+  inline void watch_mixed_literal (int lit, int blit, Clause *c) {
+    Watches &ws = mixed_watches (lit);
+    ws.push_back (Watch (blit, c));
+    LOG (c, "watch mixed %d blit %d in", lit, blit);
+  }
+
   // Watch literal 'lit' in clause with blocking literal 'blit'.
   // Inlined here, since it occurs in the tight inner loop of 'propagate'.
   //
@@ -736,27 +759,38 @@ struct Internal {
         watch_xor_literal (l0, l1, c);
         watch_xor_literal (l1, l0, c);
       }
+    } else if (c->mixed_flag) {
+      // Mixed clauses use dedicated mixed_tab with two-watch scheme
+      c->mixed_w1 = 0;
+      c->mixed_w2 = 1;
+      const int l0 = c->literals[0];
+      const int l1 = c->literals[1];
+      watch_mixed_literal (l0, l1, c);
+      watch_mixed_literal (l1, l0, c);
     } else {
       const int l0 = c->literals[0];
       const int l1 = c->literals[1];
       watch_literal (l0, l1, c);
       watch_literal (l1, l0, c);
     }
-    // const int l0 = c->literals[0];
-    // const int l1 = c->literals[1];
-    // watch_literal (l0, l1, c);
-    // watch_literal (l1, l0, c);
   }
 
   inline void unwatch_clause (Clause *c) {
-    const int l0 = c->literals[0];
-    const int l1 = c->literals[1];
-    remove_watch (watches (l0), c);
-    remove_watch (watches (l1), c);
-    // Only short XOR clauses (size <= 5) were watched
-    if (c->xor_flag && c->size <= 5) {
-      remove_watch (xor_watches (l0), c);
-      remove_watch (xor_watches (l1), c);
+    if (c->mixed_flag) {
+      const int l0 = c->literals[c->mixed_w1];
+      const int l1 = c->literals[c->mixed_w2];
+      remove_mixed_watch (mixed_watches (l0), c);
+      remove_mixed_watch (mixed_watches (l1), c);
+    } else {
+      const int l0 = c->literals[0];
+      const int l1 = c->literals[1];
+      remove_watch (watches (l0), c);
+      remove_watch (watches (l1), c);
+      // Only short XOR clauses (size <= 5) were watched
+      if (c->xor_flag && c->size <= 5) {
+        remove_watch (xor_watches (l0), c);
+        remove_watch (xor_watches (l1), c);
+      }
     }
   }
 
@@ -824,6 +858,7 @@ struct Internal {
   Clause *new_hyper_binary_resolved_clause (bool red, int glue);
   Clause *new_clause_as (const Clause *orig);
   Clause *new_resolved_irredundant_clause ();
+  void build_var_to_mixed_index ();
 
   // Forward reasoning through propagation in 'propagate.cpp'.
   //
@@ -1033,6 +1068,7 @@ struct Internal {
   void copy_clause (Clause *);
   void flush_watches (int lit, Watches &);
   void flush_xor_watches (int lit, Watches &);
+  void flush_mixed_watches (int lit, Watches &);
   size_t flush_occs (int lit);
   void flush_all_occs_and_watches ();
   void update_reason_references ();
@@ -1598,6 +1634,7 @@ struct Internal {
   // Part on picking the next decision in 'decide.cpp'.
   //
   bool satisfied ();
+  bool verify_all_xor_and_mixed_clauses ();
   void start_random_sequence ();
   int next_random_decision ();
   int next_decision_variable_on_queue ();

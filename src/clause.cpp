@@ -84,7 +84,9 @@ Clause *Internal::new_clause (bool red, int glue) {
   if (glue > size)
     glue = size;
 
-  size_t bytes = Clause::bytes (size);
+  // Determine number of blocks for mixed clauses
+  int num_blocks = mixed_clause_flag ? (int) mixed_block_offsets.size () : 0;
+  size_t bytes = Clause::bytes (size, num_blocks);
   Clause *c = (Clause *) new char[bytes];
   DeferDeleteArray<char> clause_delete ((char *) c);
 
@@ -108,8 +110,30 @@ Clause *Internal::new_clause (bool red, int glue) {
   c->vivified = false;
   c->vivify = false;
   c->used = 0;
-  if (xor_clause_flag) c->xor_flag = true;
-  else c->xor_flag = false;
+
+  // Initialize mixed clause fields
+  // Single-block mixed clauses → convert to pure XOR immediately
+  if (mixed_clause_flag && num_blocks <= 1) {
+    c->mixed_flag = 0;
+    c->xor_flag = true;
+  } else if (mixed_clause_flag && num_blocks > 0
+             && (size_t) num_blocks <= mixed_block_offsets.size ()
+             && num_blocks <= size) {
+    c->xor_flag = false;
+    c->mixed_flag = 1;
+    c->mixed_w1 = 0;
+    c->mixed_w2 = 1;
+    c->mixed_num_blocks = num_blocks;
+    c->mixed_parity = 0;
+    // Copy block offsets after the literals
+    int *offsets = c->block_offsets ();
+    for (int i = 0; i < num_blocks; i++)
+      offsets[i] = mixed_block_offsets[i];
+  } else {
+    c->mixed_flag = 0;
+    if (xor_clause_flag) c->xor_flag = true;
+    else c->xor_flag = false;
+  }
 
   c->xor_conflict_flag = false;
 
@@ -141,7 +165,15 @@ Clause *Internal::new_clause (bool red, int glue) {
   }
 
   clauses.push_back (c);
-  if (xor_clause_flag) {
+
+  // Convert single-block mixed to pure XOR
+  if (c->mixed_flag && num_blocks <= 1) {
+    c->mixed_flag = 0;
+    c->xor_flag = 1;
+    xor_clauses.push_back (c);
+  } else if (c->mixed_flag) {
+    mixed_clauses.push_back (c);
+  } else if (xor_clause_flag) {
     xor_clauses.push_back(c);
     // Register long XOR clauses for SEGA lazy evaluation
     if (c->size > 5) {
@@ -396,6 +428,12 @@ void Internal::assign_original_unit (int64_t id, int lit) { //Find : ori_unit
   if (lrat || frat)
     unit_clauses (uidx) = id;
   LOG ("original unit assign %d", lit);
+  // DISABLED
+  { int v = abs (lit);
+    if (v < (int) var_to_mixed.size ())
+      for (auto &r : var_to_mixed[v])
+        if (r.clause_lit == lit)
+          mixed_clauses[r.ci]->mixed_parity ^= (1ULL << r.bi); }
   assert (num_assigned == trail.size () || level);
   mark_fixed (lit);
   if (level)
@@ -415,10 +453,16 @@ void Internal::assign_original_unit (int64_t id, int lit) { //Find : ori_unit
 // made sure that newest_clause points to the new clause upon return.
 
 void Internal::add_new_original_clause (int64_t id) {
-  // Save and immediately reset xor_clause_flag to prevent state leaks
+  // Save and immediately reset flags to prevent state leaks
   // in early-return / skip paths (e.g., tautology, unsatisfiable).
   bool is_xor = xor_clause_flag;
+  bool is_mixed = mixed_clause_flag;
+  // Save and clear block offsets for mixed clauses
+  vector<int> saved_mixed_block_offsets;
+  if (is_mixed)
+    saved_mixed_block_offsets.swap (mixed_block_offsets);
   xor_clause_flag = false;
+  mixed_clause_flag = false;
 
   //if (xor_clause_flag) printf("add new original clause : %ld\n",id);
   if (!from_propagator && level && !opts.ilb) {
@@ -441,8 +485,13 @@ void Internal::add_new_original_clause (int64_t id) {
     skip = true;
   } else {
     assert (clause.empty ());
-    if (!is_xor)
-    {
+    if (is_mixed) {
+      // For mixed clauses, push all literals directly (no dedup or remove)
+      // Block structure is preserved via mixed_block_offsets
+      for (const auto &lit : original) {
+        clause.push_back (lit);
+      }
+    } else if (!is_xor) {
       for (const auto &lit : original) {
         int tmp = marked (lit);
         if (tmp > 0) {
@@ -601,9 +650,17 @@ void Internal::add_new_original_clause (int64_t id) {
       //if (xor_clause_flag) printf("??? glue : %d\n",glue);
       assert (glue <= (int) clause.size ());
       bool clause_redundancy = from_propagator && ext_clause_forgettable;
+      if (is_mixed) {
+        mixed_clause_flag = true;
+        // Restore saved block offsets for new_clause
+        mixed_block_offsets.swap (saved_mixed_block_offsets);
+      }
       if (is_xor) xor_clause_flag = true;  // set for new_clause()
       Clause *c = new_clause (clause_redundancy, glue); //Find : new clause
       xor_clause_flag = false;  // reset immediately
+      mixed_clause_flag = false;
+      // saved_mixed_block_offsets is cleared by swap above (now in mixed_block_offsets)
+      // mixed_block_offsets will be cleared by new_clause's consumption
       //if (xor_clause_flag) printf("add new learned clause : %ld\n",new_id);
       c->id = new_id;
       clause_id--;
@@ -783,4 +840,52 @@ void Internal::decay_clauses_upon_incremental_clauses () {
   ++stats.incremental_decay;
   last.incremental_decay.last_id = clause_id;
 }
+/*------------------------------------------------------------------------*/
+
+// Build var_to_mixed index: maps each variable to the mixed clauses and
+// block indices where it appears. Called after all clauses are parsed.
+void Internal::build_var_to_mixed_index () {
+  // Compact mixed_clauses (remove null entries)
+  vector<Clause *> compact;
+  for (auto c : mixed_clauses)
+    if (c && !c->garbage)
+      compact.push_back (c);
+  mixed_clauses = compact;
+
+  // Ensure var_to_mixed is large enough
+  while ((int) var_to_mixed.size () <= max_var + 1)
+    var_to_mixed.push_back ({});
+
+  for (int ci = 0; ci < (int) mixed_clauses.size (); ci++) {
+    Clause *c = mixed_clauses[ci];
+    if (!c || c->garbage) continue;
+    const int *offsets = c->block_offsets ();
+    int nb = c->mixed_num_blocks;
+
+    for (int bi = 0; bi < nb; bi++) {
+      int bs = (bi == 0) ? 0 : offsets[bi - 1];
+      int be = offsets[bi];
+
+      for (int j = bs; j < be; j++) {
+        int lit = c->literals[j];
+        int v = abs (lit);
+        while ((int) var_to_mixed.size () <= v)
+          var_to_mixed.push_back ({});
+        var_to_mixed[v].push_back ({ci, bi, lit});
+        // Initialize parity from current assignments
+        if (val (lit) > 0)
+          c->mixed_parity ^= (1ULL << bi);
+      }
+    }
+  }
+}
+
+void Internal::schedule_mixed_reconnect (Clause *c) {
+  // Avoid duplicates
+  for (auto existing : lost_mixed_watches)
+    if (existing == c)
+      return;
+  lost_mixed_watches.push_back (c);
+}
+
 } // namespace CaDiCaL

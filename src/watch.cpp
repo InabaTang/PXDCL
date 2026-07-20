@@ -8,6 +8,8 @@ void Internal::init_watches () {
     wtab.resize (2 * vsize, Watches ());
   if (xor_tab.size() < 2 * vsize)
     xor_tab.resize(2 * vsize, Watches());
+  if (mixed_tab.size() < 2 * vsize)
+    mixed_tab.resize(2 * vsize, Watches());
   LOG ("initialized watcher tables");
 }
 
@@ -16,6 +18,7 @@ void Internal::clear_watches () {
   {
     watches (lit).clear ();
     xor_watches (lit).clear();
+    mixed_watches (lit).clear();
   }
 }
 
@@ -23,6 +26,7 @@ void Internal::reset_watches () {
   assert (!wtab.empty ());
   erase_vector (wtab);
   erase_vector (xor_tab);
+  erase_vector (mixed_tab);
   LOG ("reset watcher tables");
 }
 

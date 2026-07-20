@@ -259,6 +259,14 @@ inline void Internal::search_assign (int lit, Clause *reason) {
       }
     }
   }
+  // DISABLED: Update mixed clause parity for this literal
+  {
+    int v = abs (lit);
+    if (v < (int) var_to_mixed.size ())
+      for (auto &r : var_to_mixed[v])
+        if (r.clause_lit == lit)
+          mixed_clauses[r.ci]->mixed_parity ^= (1ULL << r.bi);
+  }
 #ifdef LOGGING
   if (!lit_level)
     LOG ("root-level unit assign %d @ 0", lit);
@@ -467,6 +475,200 @@ bool Internal::propagate () {
     }
 
     //printf("xor_propagations end\n");
+
+    // ── Mixed XOR+OR Clause Propagation (Plan C: track lost watches) ──
+    if (false && !conflict && !mixed_tab.empty ()) {
+      Watches &mws = mixed_watches (abs (lit));
+      const const_watch_iterator meow = mws.end ();
+      watch_iterator mj = mws.begin ();
+      const_watch_iterator mi = mj;
+
+      while (mi != meow) {
+        Watch w = *mj++ = *mi++;
+        Clause *c = w.clause;
+
+        if (c->garbage || !c->mixed_flag) {
+          mj--;
+          continue;
+        }
+
+        // Verify watched positions are valid
+        if (c->mixed_w1 < 0 || c->mixed_w1 >= c->size ||
+            c->mixed_w2 < 0 || c->mixed_w2 >= c->size) {
+          // Watch positions corrupted; schedule reconnect and skip
+          schedule_mixed_reconnect (c);
+          mj--;
+          continue;
+        }
+
+        const int lit_w1 = c->literals[c->mixed_w1];
+        const int lit_w2 = c->literals[c->mixed_w2];
+
+        // Ensure the triggering literal is one of the watched ones
+        if (abs (lit_w1) != abs (lit) && abs (lit_w2) != abs (lit)) {
+          // This watch is on the wrong literal's list; remove it
+          mj--;
+          continue;
+        }
+
+        // Make abs(lit) the w2 position for consistency
+        if (abs (lit_w1) == abs (lit)) {
+          // Swap w1 and w2
+          int tmp = c->mixed_w1;
+          c->mixed_w1 = c->mixed_w2;
+          c->mixed_w2 = tmp;
+        }
+        const int w1 = c->mixed_w1;
+        const int w2 = c->mixed_w2;
+        const int l1 = c->literals[w1];
+        const int l2 = c->literals[w2];
+        assert (abs (l2) == abs (lit));
+
+        // Check if w2 is still unassigned (can happen if we watch both signs)
+        if (!val (l2)) {
+          // w2 unassigned, nothing to do
+          continue;
+        }
+
+        // If w1 is satisfied (assigned true), the clause is satisfied
+        if (val (l1) > 0) {
+          // Clause satisfied via w1; keep watching
+          continue;
+        }
+
+        // Try to find a replacement for w2: move_w2_forward
+        bool found_replacement = false;
+        // Scan forward from w2+1
+        for (int k = w2 + 1; k < c->size; k++) {
+          const int cand = c->literals[k];
+          if (k != w1 && !val (cand)) {
+            // Found unassigned literal, move w2 here
+            c->mixed_w2 = k;
+            const int new_blit = c->literals[w1];
+            watch_mixed_literal (cand, new_blit, c);
+            mj--; // Remove old watch
+            found_replacement = true;
+            break;
+          }
+        }
+        if (found_replacement) continue;
+
+        // Full sweep: check all positions
+        for (int k = 0; k < c->size; k++) {
+          const int cand = c->literals[k];
+          if (k != w1 && k != w2 && !val (cand)) {
+            c->mixed_w2 = k;
+            const int new_blit = c->literals[w1];
+            watch_mixed_literal (cand, new_blit, c);
+            mj--; // Remove old watch
+            found_replacement = true;
+            break;
+          }
+        }
+        if (found_replacement) continue;
+
+        // handle_only_w1: all other literals are assigned
+        {
+          const int *offsets = c->block_offsets ();
+          int nb = c->mixed_num_blocks;
+
+          // Determine which block w1 belongs to
+          int w1_block = -1;
+          for (int bi = 0; bi < nb; bi++) {
+            int bs = (bi == 0) ? 0 : offsets[bi - 1];
+            int be = offsets[bi];
+            if (w1 >= bs && w1 < be) { w1_block = bi; break; }
+          }
+
+          // Check if any block is already satisfied (direct val() computation)
+          bool any_block_satisfied = false;
+          for (int bi = 0; bi < nb; bi++) {
+            int bs = (bi == 0) ? 0 : offsets[bi - 1];
+            int be = offsets[bi];
+            bool block_parity = false;
+            bool block_all_assigned = true;
+            for (int j = bs; j < be; j++) {
+              int v = val (c->literals[j]);
+              if (!v) { block_all_assigned = false; break; }
+              if (v > 0) block_parity = !block_parity;
+            }
+            if (block_all_assigned && block_parity) {
+              any_block_satisfied = true;
+              break;
+            }
+          }
+
+          if (any_block_satisfied) {
+            // Clause is satisfied; keep existing watches
+            schedule_mixed_reconnect (c);
+            mj--;
+            continue;
+          }
+
+          // No block satisfied. Check w1's block:
+          int bs = (w1_block == 0) ? 0 : offsets[w1_block - 1];
+          int be = offsets[w1_block];
+          bool parity_without_w1 = false;
+          bool w1_block_all_assigned = true;
+          for (int j = bs; j < be; j++) {
+            if (j == w1) continue;
+            int v = val (c->literals[j]);
+            if (!v) { w1_block_all_assigned = false; break; }
+            if (v > 0) parity_without_w1 = !parity_without_w1;
+          }
+
+          if (!val (l1)) {
+            // w1 is unassigned → unit propagation
+            if (!w1_block_all_assigned) {
+              // Other unassigned in w1's block; can't propagate yet
+              schedule_mixed_reconnect (c);
+              mj--;
+              continue;
+            }
+            // parity_without_w1 == true means block already satisfied → skip
+            if (parity_without_w1) {
+              // Block satisfied without w1; clause is SAT
+              continue;
+            }
+            // w1 must be TRUE to satisfy the XOR block: implied = l1
+            build_chain_for_units (l1, c, 0);
+            search_assign (l1, c);
+            ticks++;
+            // Track that this clause needs rewatching on backtrack
+            schedule_mixed_reconnect (c);
+            mj--;
+          } else if (val (l1) < 0) {
+            // w1 is falsified
+            if (!w1_block_all_assigned) {
+              // Other unassigned in w1's block; can't determine conflict yet
+              schedule_mixed_reconnect (c);
+              mj--;
+              continue;
+            }
+            // w1 falsified, rest of block assigned: check parity
+            // parity_without_w1 == true means w1's block would be SAT
+            // if w1 were true. Since w1 is false, block is UNSAT.
+            if (!parity_without_w1) {
+              // w1 false + rest even parity → block unsatisfied
+              // All other blocks also unsatisfied (checked above) → CONFLICT
+              conflict = c;
+              stats.mixed_conflicts++;
+              break;
+            }
+            // parity_without_w1 == true → block satisfied despite w1 false
+            // (odd parity from other literals)
+            continue;
+          }
+          // else w1 is true (>0): this case was handled by val(l1) > 0 above
+        }
+      }
+
+      if (mj != mi) {
+        while (mi != meow)
+          *mj++ = *mi++;
+        mws.resize (mj - mws.begin ());
+      }
+    }
 
     const const_watch_iterator eow = ws.end ();
     watch_iterator j = ws.begin ();

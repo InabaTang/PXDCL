@@ -184,7 +184,7 @@ void Internal::strengthen_clause (Clause *c, int lit) {
 inline int Internal::try_to_subsume_clause (Clause *c,
                                             vector<Clause *> &shrunken) {
 
-  if (c->xor_flag)
+  if (c->xor_flag || c->mixed_flag)
     return 0;
   stats.subtried++;
   assert (!level);

@@ -26,6 +26,8 @@ Internal::Internal ()
       marked_failed (true), sweep_incomplete (false),
       randomized_deciding (false), citten (0), num_assigned (0), proof (0),
       opts (this), xor_conflict_ema (0), xor_kdd (500),
+      // Initialize mixed clause parsing state
+      mixed_clause_flag (0), mixed_clause_start (0),
 #ifndef QUIET
       profiles (this), force_phase_messages (false),
 #endif
@@ -131,6 +133,7 @@ void Internal::enlarge (int new_max_var) {
     enlarge_zero (unit_clauses_idx, 2 * new_vsize);
   enlarge_only (wtab, 2 * new_vsize);
   enlarge_only (xor_tab, 2 * new_vsize);
+  enlarge_only (mixed_tab, 2 * new_vsize);
   enlarge_only (vtab, new_vsize);
   enlarge_zero (parents, new_vsize);
   enlarge_only (links, new_vsize);
@@ -1036,6 +1039,9 @@ int Internal::solve (bool preprocess_only) { // Find : Internal solve
   else
     LOG ("internal solving in full mode");
   init_report_limits ();
+  // Build mixed clause variable index after all clauses are parsed
+  if (false && !mixed_clauses.empty ())
+    build_var_to_mixed_index ();
   int res = already_solved ();
   if (!res && preprocess_only && level)
     backtrack ();
@@ -1073,6 +1079,52 @@ int Internal::solve (bool preprocess_only) { // Find : Internal solve
   report_solving (res);
   STOP (solve);
   return res;
+}
+
+// Verify all XOR and mixed clauses against current assignments.
+// Returns true if all clauses are satisfied, false if any is violated.
+bool Internal::verify_all_xor_and_mixed_clauses () {
+  bool all_ok = true;
+
+  // Check pure XOR clauses
+  for (auto c : xor_clauses) {
+    if (!c || c->garbage) continue;
+    bool parity = false;
+    for (int i = 0; i < c->size; i++) {
+      int v = val (c->literals[i]);
+      if (v > 0) parity = !parity;
+    }
+    if (!parity) {
+      LOG (c, "XOR clause violated");
+      all_ok = false;
+    }
+  }
+
+  // Check mixed clauses
+  for (auto c : mixed_clauses) {
+    if (!c || c->garbage) continue;
+    const int *offsets = c->block_offsets ();
+    int nb = c->mixed_num_blocks;
+    bool satisfied = false;
+    for (int bi = 0; bi < nb; bi++) {
+      int bs = (bi == 0) ? 0 : offsets[bi - 1];
+      int be = offsets[bi];
+      bool parity = false;
+      bool all_assigned = true;
+      for (int j = bs; j < be; j++) {
+        int v = val (c->literals[j]);
+        if (!v) { all_assigned = false; break; }
+        if (v > 0) parity = !parity;
+      }
+      if (all_assigned && parity) { satisfied = true; break; }
+    }
+    if (!satisfied) {
+      LOG (c, "Mixed clause violated");
+      all_ok = false;
+    }
+  }
+
+  return all_ok;
 }
 
 int Internal::already_solved () {

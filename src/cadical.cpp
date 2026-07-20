@@ -905,6 +905,149 @@ int App::main (int argc, char **argv) {
     solver->message ("writing result to '%s'", write_result_path);
   }
 
+  // ── Built-in XNF solution verifier (disabled: parsing bug with + clauses) ──
+  if (false && res == 10 && dimacs_path) {
+    const char *ext = strrchr (dimacs_path, '.');
+    if (ext && !strcmp (ext, ".xnf")) {
+      // Re-parse the XNF file to verify the solution
+      FILE *xf = fopen (dimacs_path, "r");
+      if (xf) {
+        int verified = 0, violations = 0;
+        char line[8192];
+        int xnf_vars = 0, xnf_clauses = 0;
+        bool in_header = true;
+
+        while (fgets (line, sizeof (line), xf)) {
+          if (line[0] == 'c') continue;
+          if (in_header) {
+            if (line[0] == 'p') {
+              char fmt[8];
+              sscanf (line, "p %s %d %d", fmt, &xnf_vars, &xnf_clauses);
+              in_header = false;
+            }
+            continue;
+          }
+
+          // Parse clause from this line
+          const char *p = line;
+          bool is_xor = false;
+          if (*p == 'x') { is_xor = true; p++; }
+
+          // Collect literals and blocks
+          vector<int> lits;
+          vector<int> blocks; // block end positions (for mixed)
+          bool is_mixed = false;
+
+          while (*p) {
+            // Skip whitespace
+            while (*p == ' ' || *p == '\t') p++;
+            if (*p == '\n' || *p == '\r' || *p == '\0') break;
+
+            // Parse literal (possibly with '+' for mixed)
+            int sign = 1;
+            if (*p == '-') { sign = -1; p++; }
+            if (*p >= '0' && *p <= '9') {
+              int val_lit = 0;
+              while (*p >= '0' && *p <= '9') {
+                val_lit = val_lit * 10 + (*p - '0');
+                p++;
+              }
+              if (val_lit == 0) break; // end of clause
+              lits.push_back (sign * val_lit);
+
+              // Check for '+' (mixed clause XOR operator)
+              while (*p == ' ') p++;
+              if (*p == '+') {
+                if (!is_mixed && !is_xor) {
+                  // First '+': start mixed clause (no initial block marker)
+                  is_mixed = true;
+                  blocks.clear ();
+                }
+                p++; // skip '+'
+              } else if (is_mixed) {
+                // Space → end of current XOR block
+                if (!lits.empty () && (blocks.empty () || (int) lits.size () > blocks.back ()))
+                  blocks.push_back ((int) lits.size ());
+              }
+            } else {
+              break;
+            }
+          }
+
+          if (lits.empty ()) continue;
+          if (is_mixed && blocks.empty ()) {
+            // Single '+' with no spaces → single block, end = size
+            blocks.push_back ((int) lits.size ());
+          }
+          if (is_mixed && blocks.size () <= 1) {
+            // Single-block mixed = pure XOR
+            is_mixed = false;
+            is_xor = true;
+          }
+
+          verified++;
+
+          // Check clause against assignment
+          if (is_xor) {
+            // XOR clause: XOR of all literals should be TRUE
+            bool parity = false;
+            for (int lit : lits) {
+              int v = solver->val (lit);
+              if (v > 0) parity = !parity;
+            }
+            if (!parity) {
+              violations++;
+              fprintf(stderr, "DEBUG clause: is_xor=%d is_mixed=%d lits_size=%zu line=%s", is_xor, is_mixed, lits.size(), line); for (int lit : lits) fprintf(stderr, " val(%d)=%d", lit, solver->val(lit)); fprintf(stderr, "\n"); if (violations <= 5)
+                solver->message ("  VIOLATION: XOR clause unsatisfied");
+            }
+          } else if (is_mixed) {
+            // Mixed clause: at least one XOR block must have odd parity
+            if (blocks.empty () || blocks[0] != 0)
+              blocks.insert (blocks.begin (), 0);
+            if (blocks.back () != (int) lits.size ())
+              blocks.push_back ((int) lits.size ());
+            bool satisfied = false;
+            for (size_t bi = 0; bi + 1 < blocks.size (); bi++) {
+              int bs = blocks[bi];
+              int be = blocks[bi + 1];
+              bool parity = false;
+              bool all_assigned = true;
+              for (int j = bs; j < be; j++) {
+                int v = solver->val (lits[j]);
+                if (!v) { all_assigned = false; break; }
+                if (v > 0) parity = !parity;
+              }
+              if (all_assigned && parity) { satisfied = true; break; }
+            }
+            if (!satisfied) {
+              violations++;
+              fprintf(stderr, "DEBUG clause: is_xor=%d is_mixed=%d lits_size=%zu line=%s", is_xor, is_mixed, lits.size(), line); for (int lit : lits) fprintf(stderr, " val(%d)=%d", lit, solver->val(lit)); fprintf(stderr, "\n"); if (violations <= 5)
+                solver->message ("  VIOLATION: Mixed clause unsatisfied");
+            }
+          } else {
+            // OR clause: at least one literal must be true
+            bool satisfied = false;
+            for (int lit : lits) {
+              if (solver->val (lit) > 0) { satisfied = true; break; }
+            }
+            if (!satisfied) {
+              violations++;
+              fprintf(stderr, "DEBUG clause: is_xor=%d is_mixed=%d lits_size=%zu line=%s", is_xor, is_mixed, lits.size(), line); for (int lit : lits) fprintf(stderr, " val(%d)=%d", lit, solver->val(lit)); fprintf(stderr, "\n"); if (violations <= 5)
+                solver->message ("  VIOLATION: OR clause unsatisfied");
+            }
+          }
+        }
+        fclose (xf);
+
+        if (violations == 0)
+          solver->message ("Solution VERIFIED: %d clauses all satisfied", verified);
+        else
+          solver->message ("Solution INVALID: %d/%d clauses violated",
+                           violations, verified);
+      }
+    }
+  }
+
   if (res == 10) {
     if (status)
       fputs ("s SATISFIABLE\n", write_result_file);

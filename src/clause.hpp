@@ -123,6 +123,13 @@ struct Clause {
   int xor_flag; // if xor cluase , 1.
   int xor_conflict_flag;
 
+  // for mixed XOR+OR clause
+  int mixed_flag;        // 1 if mixed XOR+OR clause
+  int mixed_w1;          // index of first watched literal (unassigned)
+  int mixed_w2;          // index of second watched literal (unassigned)
+  int mixed_num_blocks;  // number of XOR blocks
+  uint64_t mixed_parity; // per-block parity bitmask (max 64 blocks)
+
 #ifndef NFLEXIBLE
   int literals[];
 #else
@@ -137,7 +144,18 @@ struct Clause {
   const_literal_iterator begin () const { return literals; }
   const_literal_iterator end () const { return literals + size; }
 
-  static size_t bytes (int size) {
+  // Block offsets for mixed XOR+OR clauses.
+  // Stored after the literals in the Clause memory block.
+  int *block_offsets () {
+    assert (mixed_flag);
+    return (int *) (literals + size);
+  }
+  const int *block_offsets () const {
+    assert (mixed_flag);
+    return (const int *) (literals + size);
+  }
+
+  static size_t bytes (int size, int num_blocks = 0) {
 
     // Memory sanitizer insists that clauses put into consecutive memory in
     // the arena are still 8 byte aligned.  We could also allocate 8 byte
@@ -149,6 +167,9 @@ struct Clause {
     const size_t header_bytes = sizeof (Clause);
     const size_t actual_literal_bytes = size * sizeof (int);
     size_t combined_bytes = header_bytes + actual_literal_bytes;
+    // Allocate extra space for block offsets in mixed clauses
+    if (num_blocks > 0)
+      combined_bytes += num_blocks * sizeof (int);
 #ifdef NFLEXIBLE
     const size_t faked_literals_bytes = sizeof ((Clause *) 0)->literals;
     combined_bytes -= faked_literals_bytes;
@@ -157,7 +178,7 @@ struct Clause {
     return aligned_bytes;
   }
 
-  size_t bytes () const { return bytes (size); }
+  size_t bytes () const { return bytes (size, mixed_flag ? mixed_num_blocks : 0); }
 
   // Check whether this clause is ready to be collected and deleted.  The
   // 'reason' flag is only there to protect reason clauses in 'reduce',

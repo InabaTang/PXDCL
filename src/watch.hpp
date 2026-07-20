@@ -47,6 +47,7 @@ struct Watch {
   bool binary () const { return size == 2; }
 
   bool IsXor () const {return clause->xor_flag; }
+  bool IsMixed () const {return clause->mixed_flag; }
 };
 
 typedef vector<Watch> Watches; // of one literal
@@ -68,6 +69,18 @@ inline void remove_watch (Watches &ws, Clause *clause) {
   }
   assert (i + 1 == end);
   ws.resize (i - ws.begin ());
+}
+
+// Safe remove for mixed watches: tolerates 0 or multiple entries
+inline void remove_mixed_watch (Watches &ws, Clause *clause) {
+  const auto end = ws.end ();
+  auto i = ws.begin ();
+  for (auto j = i; j != end; j++) {
+    const Watch &w = *i++ = *j;
+    if (w.clause == clause)
+      i--;
+  }
+  if (i != end) ws.resize (i - ws.begin ());
 }
 
 // search for the clause and updates the size marked in the watch lists

@@ -140,6 +140,14 @@ void Internal::backtrack_without_updating_phases (int new_level) {
           }
         }
       }
+      // DISABLED: Revert mixed clause parity
+      {
+        int vv = abs (lit);
+        if (vv < (int) var_to_mixed.size ())
+          for (auto &r : var_to_mixed[vv])
+            if (r.clause_lit == lit)
+              mixed_clauses[r.ci]->mixed_parity ^= (1ULL << r.bi);
+      }
       unassign(lit);
 #ifdef LOGGING
       unassigned++;
@@ -196,6 +204,55 @@ void Internal::backtrack_without_updating_phases (int new_level) {
     _eqvRelationSize = _lv2EqvRelation[level];
     _xorUnion->BackJump(new_level);
   }
+
+  // Plan A: Rebuild mixed clause watches that were lost during propagation
+  if (!lost_mixed_watches.empty ()) {
+    for (auto c : lost_mixed_watches) {
+      if (!c || c->garbage || !c->mixed_flag) continue;
+
+      // Remove any existing watches from mixed_tab (they may be stale)
+      for (int i = 0; i < c->size; i++) {
+        int lit = c->literals[i];
+        Watches &mws = mixed_watches (lit);
+        for (watch_iterator it = mws.begin (); it != mws.end ();) {
+          if (it->clause == c)
+            it = mws.erase(it);
+          else
+            ++it;
+        }
+      }
+
+      // Find two unassigned literals to watch
+      int w1 = -1, w2 = -1;
+      for (int i = 0; i < c->size; i++) {
+        int v = val (c->literals[i]);
+        if (v > 0) {
+          // Satisfied literal: we can watch it as w1 and stop
+          if (w1 < 0) w1 = i;
+          continue;
+        }
+        if (!v) {
+          // Unassigned
+          if (w1 < 0) w1 = i;
+          else if (w2 < 0) { w2 = i; break; }
+        }
+      }
+
+      if (w1 >= 0 && w2 >= 0) {
+        c->mixed_w1 = w1;
+        c->mixed_w2 = w2;
+        const int l0 = c->literals[w1];
+        const int l1 = c->literals[w2];
+        watch_mixed_literal (l0, l1, c);
+        watch_mixed_literal (l1, l0, c);
+      }
+      // If we can't find two unassigned literals, the clause is
+      // either satisfied (watches don't matter) or will conflict
+      // on next propagation (which is correct).
+    }
+    lost_mixed_watches.clear ();
+  }
+
   assert (num_assigned == trail.size ());
 }
 
