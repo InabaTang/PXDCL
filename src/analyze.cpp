@@ -357,18 +357,19 @@ inline void Internal::analyze_reason (int lit, Clause *reason, int &open,
   }
   else if (reason->mixed_flag)
   {
-    // Mixed clause reason analysis: flip TRUE literals to negative (XOR-style)
-    // The OR of XOR blocks: when all literals are false, the clause is false.
-    // Flipping val>0 literals to negative is sound for conflict analysis.
+    // XOR-style flipping: convert all TRUE literals to negative.
+    // Produces an all-FALSE clause representing "this assignment is
+    // impossible".  This over-approximates (a block can have even
+    // parity with TRUE literals) but produces stronger learned clauses
+    // that guide the search more effectively than OR-style analysis.
     vector<int> flipped;
     flipped.reserve (reason->size);
     for (const auto &other : *reason) {
       int v = val (other);
       if (v > 0) flipped.push_back (-other);
       else if (v < 0) flipped.push_back (other);
-      else flipped.push_back (other); // unassigned (shouldn't happen in reason)
+      else flipped.push_back (other);
     }
-    // Sort and dedup to handle cross-block duplicates
     sort (flipped.begin (), flipped.end (),
           [](int a, int b) { return abs (a) < abs (b)
                              || (abs (a) == abs (b) && a < b); });
