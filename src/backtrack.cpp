@@ -208,7 +208,15 @@ void Internal::backtrack_without_updating_phases (int new_level) {
   // Plan A: Rebuild mixed clause watches that were lost during propagation
   if (!lost_mixed_watches.empty ()) {
     for (auto c : lost_mixed_watches) {
-      if (!c || c->garbage || !c->mixed_flag) continue;
+      // Safety: skip NULL or non-arena pointers (dangling after GC)
+      if (!c) continue;
+      if (!arena.contains ((char*)c)) {
+        // Not in arena: check if in heap-allocated clauses
+        bool found = false;
+        for (auto &cl : clauses) if (cl == c) { found = true; break; }
+        if (!found) continue;
+      }
+      if (c->garbage || !c->mixed_flag) continue;
 
       // Remove any existing watches from mixed_tab (they may be stale)
       for (int i = 0; i < c->size; i++) {

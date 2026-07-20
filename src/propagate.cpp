@@ -599,20 +599,8 @@ bool Internal::propagate () {
             // parity_rest=even → need TRUE → imply +lit
             int ulit = c->literals[unassigned_pos];
             int implied = parity_rest ? -ulit : ulit;
-            clause.clear ();
-            clause.push_back (implied);
-            for (int j = 0; j < c->size; j++) {
-              if (j == unassigned_pos) continue;
-              int v = val (c->literals[j]);
-              clause.push_back (v > 0 ? -c->literals[j] : c->literals[j]);
-            }
-            Clause *reason_clause = new_clause (true, clause.size ());
-            watch_clause (reason_clause);
-            clause.clear ();
-            build_chain_for_units (implied, reason_clause, 0);
-            search_assign (implied, reason_clause);
-            // Context-specific: only valid while other literals stay assigned
-            mark_garbage (reason_clause);
+            build_chain_for_units (implied, c, 0);
+            search_assign (implied, c);
             ticks++;
             schedule_mixed_reconnect (c); mj--;
             continue;
@@ -924,34 +912,6 @@ bool Internal::propagate () {
       // The trail before the current decision level was conflict free.
       //
       no_conflict_until = control[level].trail;
-    }
-  }
-
-  // After full propagation, check mixed clauses.  Use mixed clause
-  // directly as conflict (not OR clause) so TRUE literals on the trail
-  // are marked seen by analyze_literal and found by 1-UIP trail scan.
-  if (!conflict && !mixed_clauses.empty ()
-      && propagated == trail.size ()
-      && num_assigned >= (size_t) active ()
-      && level > 0) {
-    for (auto c : mixed_clauses) {
-      if (!c || c->garbage) continue;
-      const int *offsets = c->block_offsets ();
-      int nb = c->mixed_num_blocks;
-      bool ok = false;
-      for (int bi = 0; bi < nb; bi++) {
-        int bs = (bi == 0) ? 0 : offsets[bi - 1];
-        int be = offsets[bi];
-        bool parity = false;
-        for (int j = bs; j < be; j++)
-          if (val (c->literals[j]) > 0) parity = !parity;
-        if (parity) { ok = true; break; }
-      }
-      if (!ok) {
-        conflict = c;
-        stats.mixed_conflicts++;
-        break;
-      }
     }
   }
 
