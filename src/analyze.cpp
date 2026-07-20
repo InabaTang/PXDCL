@@ -320,6 +320,7 @@ inline void Internal::analyze_reason (int lit, Clause *reason, int &open,
                                       int &antecedent_size) {
   assert (reason);
   assert (reason != external_reason);
+  if (!reason) return;
   bump_clause (reason);
   if (lrat)
     lrat_chain.push_back (reason->id);
