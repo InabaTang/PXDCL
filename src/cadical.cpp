@@ -906,74 +906,51 @@ int App::main (int argc, char **argv) {
   }
 
   // ── Built-in solution verifier ──
-  // Uses the solver's internal clause database (no re-parsing needed)
+  // Verifies ALL original clauses (before any simplification) against
+  // the final model.  Uses internal->val() for parity checks because
+  // solver->val() returns the TRUE PHASE (always positive).
   if (res == 10) {
     auto *internal = solver->internal;
     int violations = 0, verified = 0;
     int or_violations = 0, xor_violations = 0, mixed_violations = 0;
 
-    for (auto c : internal->clauses) {
-      if (c->garbage) continue;
-      if (c->size == 0) continue;
+    // Check saved original clauses (before any simplification)
+    uint64_t expected = internal->parsed_clauses_count;
+    for (size_t oi = 0; oi < internal->saved_original_clauses.size(); oi++) {
+      auto &orig = internal->saved_original_clauses[oi];
       verified++;
+      const auto &lits = orig.lits;
 
-      if (c->mixed_flag) {
-        // Mixed clause: at least one XOR block must have odd parity (TRUE)
-        const int *offsets = c->block_offsets ();
-        int nb = c->mixed_num_blocks;
+      if (orig.type == 2) { // MIXED
+        const auto &offsets = orig.block_offsets;
+        int nb = (int) offsets.size ();
         bool satisfied = false;
+        int pos = 0;
         for (int bi = 0; bi < nb; bi++) {
-          int bs = (bi == 0) ? 0 : offsets[bi - 1];
           int be = offsets[bi];
           bool parity = false;
-          for (int j = bs; j < be; j++) {
-            if (solver->val (c->literals[j]) > 0) parity = !parity;
+          for (; pos < be; pos++) {
+            if (internal->val (lits[pos]) > 0) parity = !parity;
           }
           if (parity) { satisfied = true; break; }
         }
         if (!satisfied) {
           violations++;
           mixed_violations++;
-          if (mixed_violations <= 5) {
-            // Check if this clause has watches
-            int watch_count = 0;
-            for (int i = 0; i < c->size; i++) {
-              for (auto &w : internal->mixed_watches (c->literals[i]))
-                if (w.clause == c) watch_count++;
-            }
-            solver->message ("  VIOLATED mixed: size=%d blocks=%d watches=%d w1=%d w2=%d",
-                             c->size, nb, watch_count, c->mixed_w1, c->mixed_w2);
-            for (int bi = 0; bi < nb && bi < 4; bi++) {
-              int bs = (bi == 0) ? 0 : offsets[bi - 1];
-              int be = offsets[bi];
-              solver->message ("    Block %d: bs=%d be=%d", bi, bs, be);
-              for (int j = bs; j < be && j < bs + 5; j++)
-                solver->message ("      lit %d: val=%d", c->literals[j],
-                                 solver->val (c->literals[j]));
-            }
-          }
         }
-      } else if (c->xor_flag) {
-        // XOR clause: odd number of TRUE literals
+      } else if (orig.type == 1) { // XOR
         bool parity = false;
-        for (int i = 0; i < c->size; i++) {
-          if (solver->val (c->literals[i]) > 0) parity = !parity;
+        for (int lit : lits) {
+          if (internal->val (lit) > 0) parity = !parity;
         }
         if (!parity) {
           violations++;
           xor_violations++;
-          if (xor_violations <= 3) {
-            solver->message ("  VIOLATION: XOR clause (size=%d)", c->size);
-            for (int i = 0; i < c->size && i < 10; i++)
-              solver->message ("    lit %d: val=%d", c->literals[i],
-                               solver->val (c->literals[i]));
-          }
         }
-      } else {
-        // OR clause: at least one literal must be TRUE
+      } else { // OR
         bool satisfied = false;
-        for (int i = 0; i < c->size; i++) {
-          if (solver->val (c->literals[i]) > 0) { satisfied = true; break; }
+        for (int lit : lits) {
+          if (internal->val (lit) > 0) { satisfied = true; break; }
         }
         if (!satisfied) {
           violations++;
@@ -983,10 +960,11 @@ int App::main (int argc, char **argv) {
     }
 
     if (violations == 0)
-      solver->message ("Solution VERIFIED: %d clauses all satisfied", verified);
+      solver->message ("Solution VERIFIED: %d/%" PRIu64 " clauses all satisfied",
+                       verified, expected);
     else {
-      solver->message ("Solution INVALID: %d/%d clauses violated", violations,
-                       verified);
+      solver->message ("Solution INVALID: %d/%d clauses violated (expected %" PRIu64 ")",
+                       violations, verified, expected);
       solver->message ("  OR: %d, XOR: %d, Mixed: %d violated",
                        or_violations, xor_violations, mixed_violations);
     }

@@ -248,7 +248,7 @@ struct Internal {
   vector<Bins> big;             // binary implication graph
   vector<Watches> wtab;         // table of watches for all literals
   vector<XorWatches> xor_tab;
-  vector<Watches> mixed_tab;     // dedicated watch table for mixed clauses
+  vector<MixedWatches> mixed_tab;     // dedicated watch table for mixed clauses
   Clause *conflict;            // set in 'propagation', reset in 'analyze'
   Clause *ignore;              // ignored during 'vivify_propagate'
   Clause *dummy_binary;        // Dummy binary clause for subsumption
@@ -365,6 +365,19 @@ struct Internal {
   struct MixedVarRef { int ci; int bi; int clause_lit; };
   vector<vector<MixedVarRef>> var_to_mixed; // var → clause parity index
   vector<Clause *> mixed_clauses;           // all mixed clauses
+
+  // Save original clauses for verification (before any simplification)
+  // type: 0=OR, 1=XOR, 2=MIXED; block_offsets only used for MIXED
+  struct OriginalClause { vector<int> lits; int type; vector<int> block_offsets; };
+  vector<OriginalClause> saved_original_clauses;
+  uint64_t parsed_clauses_count = 0; // from XNF header
+
+  // MEGA: lazy evaluation of mixed clauses (similar to SEGA for long XOR)
+  // When all literals in a mixed clause are assigned, it is added to
+  // mixed_full_clauses for conflict checking.
+  vector<int> mixed_clause_counter;          // assigned-literal count per clause
+  vector<int> mixed_full_clauses;            // indices of fully-assigned clauses
+  void mega_check();                         // check fully-assigned mixed clauses
 
   // Watch-loss tracking (Plan C): set of mixed clauses that lost watches
   // during propagation and need re-watching on backtrack.
@@ -558,7 +571,7 @@ struct Internal {
   int64_t &noccs (int lit) { return ntab[vlit (lit)]; }
   Watches &watches (int lit) { return wtab[vlit (lit)]; }
   XorWatches &xor_watches (int lit) { return xor_tab[vlit (abs (lit))]; }
-  Watches &mixed_watches (int lit) { return mixed_tab[vlit (abs (lit))]; }
+  MixedWatches &mixed_watches (int lit) { return mixed_tab[vlit (abs (lit))]; }
 
 
   // Variable bumping through exponential VSIDS (EVSIDS) as in MiniSAT.
@@ -731,7 +744,7 @@ struct Internal {
   }
 
   inline void watch_mixed_literal (int lit, int blit, Clause *c) {
-    Watches &ws = mixed_watches (lit);
+    MixedWatches &ws = mixed_watches (lit);
     ws.push_back (Watch (blit, c));
     LOG (c, "watch mixed %d blit %d in", lit, blit);
   }
@@ -1068,7 +1081,7 @@ struct Internal {
   void copy_clause (Clause *);
   void flush_watches (int lit, Watches &);
   void flush_xor_watches (int lit, Watches &);
-  void flush_mixed_watches (int lit, Watches &);
+  void flush_mixed_watches (int lit, MixedWatches &);
   size_t flush_occs (int lit);
   void flush_all_occs_and_watches ();
   void update_reason_references ();
@@ -1635,6 +1648,7 @@ struct Internal {
   //
   bool satisfied ();
   bool verify_all_xor_and_mixed_clauses ();
+  bool check_and_fix_mixed_clauses_at_sat ();
   void start_random_sequence ();
   int next_random_decision ();
   int next_decision_variable_on_queue ();

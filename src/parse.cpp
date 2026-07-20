@@ -199,6 +199,7 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) { //Find :
       solver->resize (vars);
       declared = vars;
     }
+    solver->internal->parsed_clauses_count = clauses;
 
     internal->reserve_ids (clauses);
 
@@ -268,10 +269,50 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) { //Find :
     }
 
     internal->reserve_ids (clauses);
+    strict = FORCED;
 
   } else if (!parse_inccnf_too)
-    PER ("expected 'c' after 'p '");
-  else if (ch == 'i') {
+    PER ("expected 'c' or 'x' after 'p '");
+  else if (ch == 'x') {
+    if (strict == STRICT) {
+      const char *err = parse_string ("nf ", 'x');
+      if (err) return err;
+      ch = parse_char ();
+      if (!isdigit (ch)) PER ("expected digit after 'p xnf '");
+      err = parse_positive_int (ch, vars, "<max-var>");
+      if (err) return err;
+      if (ch != ' ') PER ("expected ' ' after 'p xnf %d'", vars);
+      if (!isdigit (ch = parse_char ()))
+        PER ("expected digit after 'p xnf %d '", vars);
+      err = parse_positive_uint64_t (ch, clauses, "<num-clauses>");
+      if (err) return err;
+      if (ch != '\n')
+        PER ("expected new-line after 'p xnf %d %" PRIu64 "'", vars, clauses);
+    } else {
+      if (parse_char () != 'n') PER ("expected 'n' after 'p x'");
+      if (parse_char () != 'f') PER ("expected 'f' after 'p xn'");
+      ch = parse_char ();
+      if (!isspace (ch)) PER ("expected space after 'p xnf'");
+      do ch = parse_char (); while (isspace (ch));
+      if (!isdigit (ch)) PER ("expected digit after 'p xnf '");
+      const char *err = parse_positive_int (ch, vars, "<max-var>");
+      if (err) return err;
+      if (!isspace (ch)) PER ("expected space after 'p xnf %d'", vars);
+      do ch = parse_char (); while (isspace (ch));
+      if (!isdigit (ch)) PER ("expected digit after 'p xnf %d '", vars);
+      err = parse_positive_uint64_t (ch, clauses, "<num-clauses>");
+      if (err) return err;
+      while (ch != '\n') {
+        if (ch != '\r' && !isspace (ch))
+          PER ("expected new-line after 'p xnf %d %" PRIu64 "'", vars, clauses);
+        ch = parse_char ();
+      }
+    }
+    MSG ("found %s'p xnf %d %" PRIu64 "'%s header", tout.green_code (), vars, clauses, tout.normal_code ());
+    if (vars) { solver->resize (vars); declared = vars; }
+    internal->reserve_ids (clauses);
+    strict = FORCED;
+  } else if (ch == 'i') {
     found_inccnf_header = true;
     const char *err = parse_string ("nccnf", 'i');
     if (err)
@@ -296,7 +337,7 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) { //Find :
 
     strict = FORCED;
   } else
-    PER ("expected 'c' or 'i' after 'p '");
+    PER ("expected 'c', 'x' or 'i' after 'p '");
 
   if (parse_inccnf_too)
     *parse_inccnf_too = false;
@@ -326,6 +367,7 @@ const char *Parser::parse_dimacs_non_profiled (int &vars, int strict) { //Find :
 
     if (ch == 'a' && found_inccnf_header)
       break;
+
     const char *err = parse_lit (ch, lit, vars, strict);
     if (err)
       return err;

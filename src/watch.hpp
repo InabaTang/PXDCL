@@ -52,12 +52,16 @@ struct Watch {
 
 typedef vector<Watch> Watches; // of one literal
 typedef vector<Watch> XorWatches; // for xor clause
+typedef vector<Watch> MixedWatches; // for mixed clause
 
 typedef Watches::iterator watch_iterator;
 typedef Watches::const_iterator const_watch_iterator;
 
 typedef XorWatches::iterator xor_watch_iterator;
 typedef XorWatches::const_iterator const_xor_watch_iterator;
+
+typedef MixedWatches::iterator mixed_watch_iterator;
+typedef MixedWatches::const_iterator const_mixed_watch_iterator;
 
 inline void remove_watch (Watches &ws, Clause *clause) {
   const auto end = ws.end ();
@@ -72,7 +76,7 @@ inline void remove_watch (Watches &ws, Clause *clause) {
 }
 
 // Safe remove for mixed watches: tolerates 0 or multiple entries
-inline void remove_mixed_watch (Watches &ws, Clause *clause) {
+inline void remove_mixed_watch (MixedWatches &ws, Clause *clause) {
   const auto end = ws.end ();
   auto i = ws.begin ();
   for (auto j = i; j != end; j++) {

@@ -327,50 +327,69 @@ inline void Internal::analyze_reason (int lit, Clause *reason, int &open,
   //printf("lits is : %d ",lit); pri_val_clause(reason);
   if (reason -> xor_flag)
   {
+    // XOR-style flipping for XOR clauses (original behavior).
+    // Build a flipped copy instead of mutating the clause in-place.
+    vector<int> flipped;
+    flipped.reserve (reason->size);
     bool left = false;
-    for (auto &other : *reason)
-    {
-      if (val(other) > 0)
-      {
-        other = -other;
+    for (const auto &other : *reason) {
+      int v = val (other);
+      if (v > 0) {
+        flipped.push_back (-other);
         left ^= true;
+      } else if (v < 0) {
+        flipped.push_back (other);
+      } else {
+        flipped.push_back (other);
       }
     }
-    if (left)
-    {
-      for (auto &other : *reason)
-      {
-        if (abs(other) == abs(lit))
-        {
-          assert(val(other) < 0);
+    if (left) {
+      for (auto &other : flipped) {
+        if (abs (other) == abs (lit)) {
+          assert (val (other) < 0);
           other = -other;
           left ^= true;
         }
       }
     }
-    //printf("xiugaihou is : %d ",lit); pri_val_clause(reason);
-    assert(!left);
-    for (const auto &other : *reason)
-      if (abs(other) != abs(lit))
-      {
+    assert (!left);
+    for (const auto &other : flipped)
+      if (abs (other) != abs (lit))
         analyze_literal (other, open, resolvent_size, antecedent_size);
-      }
   }
   else if (reason->mixed_flag)
   {
-    // XOR-style flipping: convert all TRUE literals to negative.
-    // Produces an all-FALSE clause representing "this assignment is
-    // impossible".  This over-approximates (a block can have even
-    // parity with TRUE literals) but produces stronger learned clauses
-    // that guide the search more effectively than OR-style analysis.
+    // XOR-style flipping for mixed clauses (same logic as XOR).
+    // Convert all TRUE literals to FALSE using the 'left' flag to track
+    // parity.  The flipped clause produces an all-FALSE representation
+    // needed for analyze_literal.  For the pivot: skip all occurrences
+    // with the same abs value (a variable can appear in multiple blocks,
+    // but the pivot's parity adjustment via the 'left' flag handles the
+    // block-level parity correctly for the specific propagation).
     vector<int> flipped;
     flipped.reserve (reason->size);
+    bool left = false;
     for (const auto &other : *reason) {
       int v = val (other);
-      if (v > 0) flipped.push_back (-other);
-      else if (v < 0) flipped.push_back (other);
-      else flipped.push_back (other);
+      if (v > 0) {
+        flipped.push_back (-other);
+        left ^= true;
+      } else if (v < 0) {
+        flipped.push_back (other);
+      } else {
+        flipped.push_back (other);
+      }
     }
+    if (left) {
+      for (auto &other : flipped) {
+        if (abs (other) == abs (lit)) {
+          assert (val (other) < 0);
+          other = -other;
+          left ^= true;
+        }
+      }
+    }
+    assert (!left);
     sort (flipped.begin (), flipped.end (),
           [](int a, int b) { return abs (a) < abs (b)
                              || (abs (a) == abs (b) && a < b); });
@@ -597,13 +616,6 @@ Clause *Internal::new_driving_clause (const int glue, int &jump) {
     MSORT (opts.radixsortlim, clause.begin (), clause.end (),
            analyze_trail_negative_rank (this), analyze_trail_larger (this));
 
-
-    // cout << "Analyzed clause : ";
-    // for (int i = 0 ; i < clause.size() ; i ++)
-    // {
-    //   cout << clause[i] << ":" << var(clause[i]).level << " ";
-    // }
-    // cout << endl;
     jump = var (clause[1]).level;
     res = new_learned_redundant_clause (glue);
     res->used = max_used;
@@ -672,9 +684,11 @@ inline int Internal::find_conflict_level (int &forced) {
   const int size = conflict->size;
   int *lits = conflict->literals;
 
-  // Skip reordering for mixed clauses: block offsets must be preserved
-  if (conflict->mixed_flag) {
-    forced = 0;
+  // Skip reordering for mixed and XOR clauses:
+  // - Mixed: block offsets must be preserved
+  // - XOR: watch positions (lits[0], lits[1]) must be preserved
+  if (conflict->mixed_flag || conflict->xor_flag) {
+    if (count > 1) forced = 0;
     return res;
   }
 
@@ -1159,6 +1173,37 @@ void Internal::analyze () { //Find : analyze
           if (assigned) search_assign_driving (forced, conflict);
           else search_assign_driving (-forced, conflict);
         }
+        else if (conflict && conflict->mixed_flag)
+        {
+          // For mixed clauses: the forced literal must make its block SAT.
+          // All other blocks are falsified (even parity, fully assigned at
+          // lower levels).  Find which block contains 'forced', compute
+          // parity of other literals in that block, and assign accordingly.
+          // Odd other parity → force FALSE; Even other parity → force TRUE.
+          const int *offsets = conflict->block_offsets ();
+          int nb = conflict->mixed_num_blocks;
+          bool other_parity = false;
+          for (int bi = 0; bi < nb; bi++) {
+            int bs = (bi == 0) ? 0 : offsets[bi - 1];
+            int be = offsets[bi];
+            bool in_block = false;
+            for (int j = bs; j < be; j++) {
+              if (abs (conflict->literals[j]) == abs (forced))
+                { in_block = true; break; }
+            }
+            if (in_block) {
+              for (int j = bs; j < be; j++) {
+                if (abs (conflict->literals[j]) == abs (forced)) continue;
+                if (val (conflict->literals[j]) > 0) other_parity = !other_parity;
+              }
+              break;
+            }
+          }
+          if (other_parity) // odd parity → force FALSE
+            search_assign_driving (-forced, conflict);
+          else // even parity → force TRUE
+            search_assign_driving (forced, conflict);
+        }
         else search_assign_driving (forced, conflict);
 
         conflict = 0;
@@ -1375,7 +1420,6 @@ void Internal::analyze () { //Find : analyze
         }
         assert (i > 0);
         const int lit = (*t)[--i];
-        //printf("lit is %d\n",lit);
         if (!flags (lit).seen)
           continue;
         if (var (lit).level == level)

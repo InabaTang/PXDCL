@@ -115,11 +115,12 @@ void Internal::mark_satisfied_clauses_as_garbage () {
     }
     if (c->xor_flag)
     {
-      const int tmp = clause_contains_xor_fixed_literal(c);
-      if (tmp > 0)
-        mark_garbage (c);
-      else if (tmp < 0)
-        remove_falsified_literals (c);
+      // Skip XOR clause simplification during CDCL.  XOR clause
+      // satisfaction depends on parity of ALL literals, and
+      // "fixed" literals may come from learned clauses that could
+      // be incorrect.  Removing an XOR clause based on potentially
+      // wrong level-0 assignments removes necessary constraints,
+      // leading to more incorrect learned clauses and false UNSAT.
       continue;
     }
     else
@@ -303,12 +304,12 @@ inline void Internal::flush_xor_watches (int lit, Watches &saved)
   shrink_vector (xws);
 }
 
-inline void Internal::flush_mixed_watches (int lit, Watches &saved) {
+inline void Internal::flush_mixed_watches (int lit, MixedWatches &saved) {
   assert (saved.empty ());
-  Watches &mws = mixed_watches (lit);
-  const const_watch_iterator end = mws.end ();
-  watch_iterator j = mws.begin ();
-  const_watch_iterator i;
+  MixedWatches &mws = mixed_watches (lit);
+  const const_mixed_watch_iterator end = mws.end ();
+  mixed_watch_iterator j = mws.begin ();
+  const_mixed_watch_iterator i;
   for (i = j; i != end; i++) {
     Watch w = *i;
     Clause *c = w.clause;

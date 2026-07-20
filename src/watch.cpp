@@ -9,7 +9,7 @@ void Internal::init_watches () {
   if (xor_tab.size() < 2 * vsize)
     xor_tab.resize(2 * vsize, Watches());
   if (mixed_tab.size() < 2 * vsize)
-    mixed_tab.resize(2 * vsize, Watches());
+    mixed_tab.resize(2 * vsize, MixedWatches());
   LOG ("initialized watcher tables");
 }
 

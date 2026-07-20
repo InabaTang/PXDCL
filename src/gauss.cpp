@@ -369,7 +369,10 @@ int Internal::gauss_old_elimination()
         xor_clause_flag = false;
         NextRow: ;
     }
-    // Mark original XOR clauses as garbage (replaced by simplified ones)
+    // Mark original XOR clauses as garbage (replaced by simplified ones).
+    // Original clauses are in saved_original_clauses for verification.
+    // XOR analyze_reason now uses temporary copy (no in-place mutation),
+    // so the garbage marking is safe for correctness.
     for (int row = 0; row < rows; row++) {
       Clause *c = xor_clauses[row];
       if (c && !c->garbage) {

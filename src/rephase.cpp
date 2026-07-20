@@ -98,6 +98,19 @@ char Internal::rephase_best () {
 // Trigger local search 'walk' in 'walk.cpp'.
 
 char Internal::rephase_walk () {
+  // FIXME: Walk local search corrupts level-0 assignments when XOR/mixed
+  // clauses are present.  It flips variables that have been proven as unit
+  // clauses at the root level.  Skip walk when XOR/mixed clauses exist.
+  if (!xor_clauses.empty () || !mixed_clauses.empty ()) {
+    stats.rephased.best++;
+    PHASE ("rephase", stats.rephased.total,
+           "skipping walk (XOR/mixed clauses active), using best instead");
+    signed char val;
+    for (auto idx : vars)
+      if ((val = phases.best[idx]))
+        phases.saved[idx] = val;
+    return 'B';
+  }
   stats.rephased.walk++;
   PHASE ("rephase", stats.rephased.total,
          "starting local search to improve current phase");

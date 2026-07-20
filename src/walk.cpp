@@ -352,8 +352,8 @@ int Internal::walk_pick_lit (Walker &walker, Clause *c) {
   int64_t propagations = 0;
   for (const auto lit : *c) {
     assert (active (lit));
-    if (var (lit).level == 1) {
-      LOG ("skipping assumption %d for scoring", -lit);
+    if (var (lit).level <= 1) {
+      LOG ("skipping fixed/assumption %d for scoring (level %d)", -lit, var(lit).level);
       continue;
     }
     assert (active (lit));
@@ -384,7 +384,7 @@ int Internal::walk_pick_lit (Walker &walker, Clause *c) {
   sum = *j++;
   while (sum <= lim && i != end) {
     res = *i++;
-    if (var (res).level == 1) {
+    if (var (res).level <= 1) {
       LOG ("skipping assumption %d without score", -res);
       continue;
     }
@@ -445,7 +445,7 @@ int Internal::walk_pick_lit (Walker &walker, const TaggedBinary c) {
   sum = *j++;
   while (sum <= lim && i != end) {
     res = *i++;
-    if (var (res).level == 1) {
+    if (var (res).level <= 1) {
       LOG ("skipping assumption %d without score", -res);
       continue;
     }
@@ -468,10 +468,20 @@ bool Internal::walk_flip_lit (Walker &walker, int lit) {
   LOG ("flipping assign %d", lit);
   assert (val (lit) < 0);
 
+  // Never flip fixed variables (level 0 assignments).
+  // These are proven unit clauses and changing them corrupts
+  // the solver state, leading to false conflicts.
+  // Return false to abort the walk — it's become invalid.
+  const int idx = abs (lit);
+  if (var (idx).level == 0) {
+    LOG ("refusing to flip fixed variable %d", idx);
+    STOP (walkflip);
+    return false; // abort walk
+  }
+
   // First flip the literal value.
   //
   const int tmp = sign (lit);
-  const int idx = abs (lit);
   set_val (idx, tmp);
   assert (val (lit) > 0);
 

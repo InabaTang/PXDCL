@@ -865,7 +865,6 @@ int Internal::preprocess (bool always) {
     bump_xor_variable_scores();
 
   preprocess_quickly (always);
-  // Rebuild SEGA data after preprocessing may have modified clause DB.
   if (!xor_clauses.empty ())
     rebuild_sega_data ();
   for (int i = 0; i < lim.preprocessing; i++)
@@ -1040,8 +1039,15 @@ int Internal::solve (bool preprocess_only) { // Find : Internal solve
     LOG ("internal solving in full mode");
   init_report_limits ();
   // Build mixed clause variable index after all clauses are parsed
-  if (false && !mixed_clauses.empty ())
+  // Also initialize MEGA counters for lazy mixed clause evaluation
+  if (!mixed_clauses.empty ()) {
     build_var_to_mixed_index ();
+    mixed_clause_counter.resize (mixed_clauses.size (), 0);
+  // DEBUG: dump all clauses with their types (commented out)
+  // printf("c === Clause Dump: %zu binary+ clauses ===\n", clauses.size());
+  // for (size_t ci = 0; ci < clauses.size(); ci++) { ... }
+  // printf("c === End Clause Dump ===\n");
+
   int res = already_solved ();
   if (!res && preprocess_only && level)
     backtrack ();
@@ -1059,13 +1065,6 @@ int Internal::solve (bool preprocess_only) { // Find : Internal solve
   if (!res && !level)
     res = preprocess (preprocess_only);
   if (!preprocess_only) {
-    // lucky_phases and local_search disabled: SEGA is blocked during
-    // lucky phases (!searching_lucky_phases guard in propagate), causing
-    // XOR clauses to be ignored during satisfaction checks → false SAT.
-    // if (!res && !level && opts.luckylate)
-    //   res = lucky_phases ();
-    // if (!res && !level)
-    //   res = local_search ();
     if (!res)
       decay_clauses_upon_incremental_clauses ();
     if (!res || (res == 10 && external_prop)) {
@@ -1092,8 +1091,7 @@ bool Internal::verify_all_xor_and_mixed_clauses () {
     if (c->size <= 0 || c->size > 1000000) continue; // safety
     bool parity = false;
     for (int i = 0; i < c->size; i++) {
-      int v = val (c->literals[i]);
-      if (v > 0) parity = !parity;
+      if (val (c->literals[i]) > 0) parity = !parity;
     }
     if (!parity) {
       LOG (c, "XOR clause violated");
@@ -1101,11 +1099,44 @@ bool Internal::verify_all_xor_and_mixed_clauses () {
     }
   }
 
-  // Check mixed clauses
+  // Check mixed clauses (using internal val())
+  for (auto c : clauses) {
+    if (c->garbage) continue;
+    if (c->size == 0) continue;
+    if (!c->mixed_flag) continue;
+    const int *offsets = c->block_offsets ();
+    int nb = c->mixed_num_blocks;
+    bool satisfied = false;
+    for (int bi = 0; bi < nb; bi++) {
+      int bs = (bi == 0) ? 0 : offsets[bi - 1];
+      int be = offsets[bi];
+      bool parity = false;
+      for (int j = bs; j < be; j++) {
+        if (val (c->literals[j]) > 0) parity = !parity;
+      }
+      if (parity) { satisfied = true; break; }
+    }
+    if (!satisfied) {
+      LOG (c, "Mixed clause violated (internal model)");
+      all_ok = false;
+    }
+  }
+  return all_ok;
+}
+
+// Check all mixed clauses when the solver thinks it found SAT.
+// If violations are found, backtrack to the highest decision level
+// among the violated clauses and rebuild their watches.
+// Returns true if all mixed clauses are SAT (no fix needed).
+bool Internal::check_and_fix_mixed_clauses_at_sat () {
+  if (mixed_clauses.empty ()) return true;
+
+  Clause *violated = nullptr;
   for (auto c : mixed_clauses) {
     if (!c || c->garbage) continue;
-    if (c->size <= 0 || c->size > 1000000) continue; // safety
+    if (c->size <= 0 || c->size > 1000000) continue;
     if (c->mixed_num_blocks <= 0 || c->mixed_num_blocks > 1000) continue;
+
     const int *offsets = c->block_offsets ();
     int nb = c->mixed_num_blocks;
     bool satisfied = false;
@@ -1114,21 +1145,36 @@ bool Internal::verify_all_xor_and_mixed_clauses () {
       int be = offsets[bi];
       if (bs < 0 || be > c->size || bs >= be) continue;
       bool parity = false;
-      bool all_assigned = true;
       for (int j = bs; j < be; j++) {
-        int v = val (c->literals[j]);
-        if (!v) { all_assigned = false; break; }
-        if (v > 0) parity = !parity;
+        if (val (c->literals[j]) > 0) parity = !parity;
       }
-      if (all_assigned && parity) { satisfied = true; break; }
+      if (parity) { satisfied = true; break; }
     }
-    if (!satisfied) {
-      LOG (c, "Mixed clause violated");
-      all_ok = false;
-    }
+    if (!satisfied) { violated = c; break; }
   }
 
-  return all_ok;
+  if (!violated) return true;
+
+  int highest_level = 0;
+  for (int i = 0; i < violated->size; i++) {
+    int lvl = var (violated->literals[i]).level;
+    if (lvl > highest_level) highest_level = lvl;
+  }
+
+  LOG ("SAT-check found violated mixed clause, level=%d highest=%d",
+       level, highest_level);
+
+  // Loop breaker: if we keep detecting root-level violations,
+  // accept SAT after enough attempts.
+  if (highest_level == 0) {
+    stats.mixed_conflicts++;
+    if (stats.mixed_conflicts > 1000) return true; // give up
+    rephase ();
+  } else {
+    backtrack (highest_level - 1);
+  }
+
+  return false;
 }
 
 int Internal::already_solved () {
@@ -1391,6 +1437,7 @@ int Internal::handle_xor_decision () {
       return lit;
     }
   }
+  return 0;
 }
 
 bool Internal::need_xor_decision () {

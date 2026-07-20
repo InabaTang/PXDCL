@@ -684,6 +684,15 @@ void Internal::try_to_eliminate_variable (Eliminator &eliminator, int pivot,
     return;
   assert (!frozen (pivot));
 
+  // Do not eliminate variables that appear in mixed XOR+OR clauses.
+  // The extended model may assign wrong values to eliminated variables,
+  // violating mixed clause constraints.
+  int v = abs (pivot);
+  if (v < (int) var_to_mixed.size () && !var_to_mixed[v].empty ()) {
+    LOG ("skipping elimination of %d (appears in mixed clauses)", pivot);
+    return;
+  }
+
   // First flush garbage clauses.
   //
   int64_t pos = flush_occs (pivot);

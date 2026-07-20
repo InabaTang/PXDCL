@@ -12,6 +12,12 @@ inline void Internal::unassign (int lit) {
   set_val (lit, 0);
 
   int idx = vidx (lit);
+  // Clear reason on unassign: prevents stale reason checks in
+  // XOR/mixed circular reasoning guards after backtrack.
+  // Without this, a literal assigned by an XOR clause at a low level
+  // keeps its reason after backtrack, causing the guard to skip
+  // re-checking when the clause becomes violated later.
+  var (idx).reason = 0;
   LOG ("unassign %d @ %d", lit, var (idx).level);
   num_assigned--;
 
@@ -96,8 +102,9 @@ void Internal::backtrack_without_updating_phases (int new_level) {
   if (new_level == level)
     return;
 
-  // SEGA: clearing on backtrack since counters changed
+  // SEGA+MEGA: clearing on backtrack since counters changed
   xor_full_clause.clear();
+  mixed_full_clauses.clear();
 
   stats.backtracks++;
 
@@ -140,13 +147,16 @@ void Internal::backtrack_without_updating_phases (int new_level) {
           }
         }
       }
-      // DISABLED: Revert mixed clause parity
+      // Revert mixed clause parity and decrement MEGA counters
       {
         int vv = abs (lit);
         if (vv < (int) var_to_mixed.size ())
-          for (auto &r : var_to_mixed[vv])
+          for (auto &r : var_to_mixed[vv]) {
+            if (mixed_clauses[r.ci] == nullptr) continue;
             if (r.clause_lit == lit)
               mixed_clauses[r.ci]->mixed_parity ^= (1ULL << r.bi);
+            mixed_clause_counter[r.ci]--;
+          }
       }
       unassign(lit);
 #ifdef LOGGING
@@ -221,8 +231,8 @@ void Internal::backtrack_without_updating_phases (int new_level) {
       // Remove any existing watches from mixed_tab (they may be stale)
       for (int i = 0; i < c->size; i++) {
         int lit = c->literals[i];
-        Watches &mws = mixed_watches (lit);
-        for (watch_iterator it = mws.begin (); it != mws.end ();) {
+        MixedWatches &mws = mixed_watches (lit);
+        for (mixed_watch_iterator it = mws.begin (); it != mws.end ();) {
           if (it->clause == c)
             it = mws.erase(it);
           else

@@ -464,6 +464,13 @@ void Internal::add_new_original_clause (int64_t id) {
   vector<int> saved_mixed_block_offsets;
   if (is_mixed)
     saved_mixed_block_offsets.swap (mixed_block_offsets);
+  // Save original clause for verification (before any simplification)
+  {
+    int typ = is_mixed ? 2 : (is_xor ? 1 : 0);
+    vector<int> blk_offsets;
+    if (is_mixed) blk_offsets = saved_mixed_block_offsets;
+    saved_original_clauses.push_back ({original, typ, blk_offsets});
+  }
   xor_clause_flag = false;
   mixed_clause_flag = false;
 
@@ -848,6 +855,7 @@ void Internal::decay_clauses_upon_incremental_clauses () {
 
 // Build var_to_mixed index: maps each variable to the mixed clauses and
 // block indices where it appears. Called after all clauses are parsed.
+// Also initializes MEGA counters based on current assignments.
 void Internal::build_var_to_mixed_index () {
   // Compact mixed_clauses (remove null entries)
   vector<Clause *> compact;
@@ -860,11 +868,16 @@ void Internal::build_var_to_mixed_index () {
   while ((int) var_to_mixed.size () <= max_var + 1)
     var_to_mixed.push_back ({});
 
+  // Initialize MEGA counters
+  mixed_clause_counter.resize (mixed_clauses.size (), 0);
+
   for (int ci = 0; ci < (int) mixed_clauses.size (); ci++) {
     Clause *c = mixed_clauses[ci];
     if (!c || c->garbage) continue;
     const int *offsets = c->block_offsets ();
     int nb = c->mixed_num_blocks;
+
+    int assigned_count = 0;
 
     for (int bi = 0; bi < nb; bi++) {
       int bs = (bi == 0) ? 0 : offsets[bi - 1];
@@ -879,9 +892,19 @@ void Internal::build_var_to_mixed_index () {
         // Initialize parity from current assignments
         if (val (lit) > 0)
           c->mixed_parity ^= (1ULL << bi);
+        // Count already-assigned literals for MEGA
+        if (val (lit))
+          assigned_count++;
       }
     }
+
+    mixed_clause_counter[ci] = assigned_count;
+
+    // If all literals are already assigned, schedule for checking
+    if (assigned_count == c->size)
+      mixed_full_clauses.push_back (ci);
   }
+
 }
 
 void Internal::schedule_mixed_reconnect (Clause *c) {

@@ -259,13 +259,21 @@ inline void Internal::search_assign (int lit, Clause *reason) {
       }
     }
   }
-  // DISABLED: Update mixed clause parity for this literal
+  // MEGA: Update mixed clause parity and increment assigned-literal counters
   {
     int v = abs (lit);
-    if (v < (int) var_to_mixed.size ())
-      for (auto &r : var_to_mixed[v])
+    if (v < (int) var_to_mixed.size ()) {
+      for (auto &r : var_to_mixed[v]) {
+        Clause *mc = mixed_clauses[r.ci];
+        if (mc == nullptr) continue;
         if (r.clause_lit == lit)
-          mixed_clauses[r.ci]->mixed_parity ^= (1ULL << r.bi);
+          mc->mixed_parity ^= (1ULL << r.bi);
+        // Increment assigned-literal counter. When all literals are
+        // assigned, schedule the clause for conflict checking.
+        if (++mixed_clause_counter[r.ci] == mc->size)
+          mixed_full_clauses.push_back (r.ci);
+      }
+    }
   }
 #ifdef LOGGING
   if (!lit_level)
@@ -414,10 +422,7 @@ bool Internal::propagate () {
 
       //printf("xor_watch is :" ); xw.clause->pri_clause();
 
-      if (val(lits[0]) and var(lits[0]).reason and var(lits[0]).reason->xor_flag and var (lits[0]).reason == xw.clause)
-      {
-        continue;
-      }
+      // Removed circular reasoning guard.
 
       assert(abs(lits[0]) == abs(lit) || abs(lits[1]) == abs(lit));
 
@@ -486,10 +491,10 @@ bool Internal::propagate () {
     // If exactly one literal is unassigned and all other blocks are falsified
     // → UNIT propagation (the last block must be satisfied).
     if (!conflict && !mixed_tab.empty ()) {
-      Watches &mws = mixed_watches (abs (lit));
-      const const_watch_iterator meow = mws.end ();
-      watch_iterator mj = mws.begin ();
-      const_watch_iterator mi = mj;
+      MixedWatches &mws = mixed_watches (abs (lit));
+      const const_mixed_watch_iterator meow = mws.end ();
+      mixed_watch_iterator mj = mws.begin ();
+      const_mixed_watch_iterator mi = mj;
 
       while (mi != meow) {
         Watch w = *mj++ = *mi++;
@@ -606,17 +611,27 @@ bool Internal::propagate () {
             // parity_rest=even → need TRUE → imply +lit
             int ulit = c->literals[unassigned_pos];
             int implied = parity_rest ? -ulit : ulit;
+
+            // Check for conflicting assignment before propagating
+            if (val (implied) < 0) {
+              conflict = c;
+              stats.mixed_conflicts++;
+              break;
+            }
+            if (val (implied) > 0) continue; // already satisfied
+
             build_chain_for_units (implied, c, 0);
             search_assign (implied, c);
             ticks++;
-            schedule_mixed_reconnect (c); mj--;
+            // Keep the watch (same as XOR pattern): don't do mj--.
             continue;
           }
         }
 
         if (unassigned_count > 1) {
-          // Multiple unassigned but we can't watch them → fix on backtrack
-          schedule_mixed_reconnect (c); mj--;
+          // Multiple unassigned but no replacement found.
+          // Keep the watch (same as XOR pattern): the watched variables
+          // are already assigned, so the watch stays dormant until backtrack.
           continue;
         }
 
@@ -886,6 +901,11 @@ bool Internal::propagate () {
     sega();
   }
 
+  // MEGA: check fully-assigned mixed clauses for conflicts
+  if (!conflict && !mixed_full_clauses.empty()) {
+    mega_check();
+  }
+
   if (searching_lucky_phases) {
 
     if (conflict)
@@ -1019,6 +1039,61 @@ void Internal::propergate () {
       ws.resize (j - ws.begin ());
     }
   }
+}
+
+/*------------------------------------------------------------------------*/
+
+// MEGA: Mixed clause Evaluation via Generalized Assignment tracking.
+// When all literals in a mixed clause are assigned, check all blocks.
+// If any block is satisfied (odd parity), the clause is SAT.
+// If all blocks are falsified (even parity with all assigned), → CONFLICT.
+void Internal::mega_check () {
+  assert (!conflict);
+
+  for (int ci : mixed_full_clauses) {
+    Clause *c = mixed_clauses[ci];
+    if (!c || c->garbage || !c->mixed_flag) continue;
+
+    // Verify all literals are actually assigned (counter drift defense)
+    bool all_assigned = true;
+    for (int i = 0; i < c->size; i++) {
+      if (!val (c->literals[i])) {
+        all_assigned = false;
+        break;
+      }
+    }
+    if (!all_assigned) continue;
+
+    const int *offsets = c->block_offsets ();
+    const int nb = c->mixed_num_blocks;
+    bool any_satisfied = false;
+
+    for (int bi = 0; bi < nb; bi++) {
+      int bs = (bi == 0) ? 0 : offsets[bi - 1];
+      int be = offsets[bi];
+      bool parity = false;
+      bool block_all_assigned = true;
+      for (int j = bs; j < be; j++) {
+        int v = val (c->literals[j]);
+        if (!v) { block_all_assigned = false; break; }
+        if (v > 0) parity = !parity;
+      }
+      if (block_all_assigned && parity) {
+        any_satisfied = true;
+        break;
+      }
+    }
+
+    if (any_satisfied) continue; // clause is SAT
+
+    // All blocks are fully assigned and none is SAT → CONFLICT
+    conflict = c;
+    stats.mixed_conflicts++;
+    LOG (c, "MEGA mixed clause conflict");
+    break;
+  }
+
+  mixed_full_clauses.clear ();
 }
 
 } // namespace CaDiCaL
