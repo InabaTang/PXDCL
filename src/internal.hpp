@@ -35,7 +35,6 @@ extern "C" {
 
 #include <algorithm>
 #include <queue>
-#include <set>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -264,7 +263,6 @@ struct Internal {
   size_t propagated;         // next trail position to propagate
   size_t propagated2;        // next binary trail position to propagate
   size_t propergated;        // propagated without blocking literals
-  size_t propagate_counter;  // counter for lazy EqvPropagation batching
   size_t best_assigned;      // best maximum assigned ever
   size_t target_assigned;    // maximum assigned without conflict
   size_t no_conflict_until;  // largest trail prefix without conflict
@@ -383,9 +381,7 @@ struct Internal {
 
   // Watch-loss tracking (Plan C): set of mixed clauses that lost watches
   // during propagation and need re-watching on backtrack.
-  // Uses vector (preserves insertion order) + unordered_set (O(1) dedup).
   vector<Clause *> lost_mixed_watches;
-  unordered_set<Clause *> lost_mixed_set;
   void schedule_mixed_reconnect (Clause *c);
 
   // for SEGA: lazy evaluation of long XOR clauses (size > 5)
@@ -1965,7 +1961,6 @@ struct Internal {
 
   // for xor union
   int _eqvRelationSize;
-  int _lazyEqvStart;        // batch start for lazy EqvPropagation
   int *_eqvReasons;
   UnionSet *_xorUnion;
   Eqvmap *_eqvMaps;

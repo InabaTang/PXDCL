@@ -192,7 +192,7 @@ OPTION( report,reportdefault,  0,  1,0,0,1, "enable reporting") \
 OPTION( reportall,         0,  0,  1,0,0,1, "report even if not successful") \
 OPTION( reportsolve,       0,  0,  1,0,0,1, "use solving not process time") \
 OPTION( restart,           1,  0,  1,0,0,1, "enable restarts") \
-OPTION( restartint,        1,  1,2e9,0,0,1, "restart interval") \
+OPTION( restartint,        2,  1,2e9,0,0,1, "restart interval") \
 OPTION( restartmarginfocused,10,0,25,0,0,1, "focused slow fast margin in percent") \
 OPTION( restartmarginstable ,25,0,25,0,0,1, "stable slow fast margin in percent") \
 OPTION( restartreusetrail, 1,  0,  1,0,0,1, "enable trail reuse") \
