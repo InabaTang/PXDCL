@@ -3420,6 +3420,12 @@ void Closure::extract_and_gates () {
       continue;
     if (c->redundant)
       continue;
+    // Skip XOR and mixed clauses: AND-gate extraction uses OR-clause
+    // semantics where a TRUE literal means the clause is satisfied.
+    // For XOR/mixed clauses, a TRUE literal does not guarantee
+    // satisfiability (parity-based), so skip them here.
+    if (c->xor_flag || c->mixed_flag)
+      continue;
     extract_and_gates_with_base_clause (c);
     assert (lrat_chain.empty ());
   }
@@ -4047,6 +4053,12 @@ void Closure::init_xor_gate_extraction (std::vector<Clause *> &candidates) {
     if (c->redundant)
       continue;
     if (c->garbage)
+      continue;
+    // Skip XOR and mixed clauses: they use parity-based satisfiability.
+    // The OR-clause heuristic below (TRUE literal → clause satisfied →
+    // mark as garbage) would incorrectly garbage-collect XOR/mixed clauses
+    // that have TRUE literals but are not yet satisfied (need odd parity).
+    if (c->xor_flag || c->mixed_flag)
       continue;
     if (c->size < 3)
       continue;
