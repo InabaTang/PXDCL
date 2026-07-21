@@ -683,6 +683,18 @@ void Internal::add_new_original_clause (int64_t id) {
         {
           AddXorGate(c);
         }
+        // Binary XOR clauses encode equivalence relations.
+        // a ⊕ b = TRUE  ⇔  a = ¬b.  Register this as a level-0
+        // equivalence in the UnionSet so that assigning either literal
+        // immediately propagates the other with the correct polarity.
+        if (c->xor_flag && c->size == 2)
+        {
+          int l0 = c->literals[0], l1 = c->literals[1];
+          // XOR(l0,l1)=TRUE  →  l0 == -l1
+          AddEqvRelation (l0, -l1, 0);
+          // Symmetric: -l0 == l1  (redundant but maintains invariant)
+          AddEqvRelation (-l0, l1, 0);
+        }
       }
 
       watch_clause (c);

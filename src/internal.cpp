@@ -1046,6 +1046,21 @@ int Internal::solve (bool preprocess_only) { // Find : Internal solve
     build_var_to_mixed_index ();
     mixed_clause_counter.resize (mixed_clauses.size (), 0);
   }
+  // Process level-0 equivalence relations from binary XOR clauses.
+  // Binary XOR (a⊕b=TRUE ⇔ a=¬b) are added to _eqvRelations during
+  // clause creation.  Propagate them now before any decisions so they
+  // become permanent (level-0) equivalences.
+  if (opts.unionset && _eqvRelationSize > 0) {
+    vector<int> conflict_vec = EqvPropagation (0);
+    if (!conflict_vec.empty ()) {
+      // Level-0 equivalence conflict → formula is UNSAT
+      LOG ("level-0 equivalence propagation produced conflict");
+      unsat = true;
+      conflict_id = ++clause_id;
+      marked_failed = true;
+      conclusion.push_back (conflict_id);
+    }
+  }
   // DEBUG: dump all clauses with their types (commented out)
   // printf("c === Clause Dump: %zu binary+ clauses ===\n", clauses.size());
   // for (size_t ci = 0; ci < clauses.size(); ci++) { ... }
