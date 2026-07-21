@@ -369,12 +369,10 @@ int Internal::gauss_old_elimination()
         xor_clause_flag = false;
         NextRow: ;
     }
-    // Keep original XOR clauses alongside simplified ones.
-    // XOR clauses with 4+ variables cannot be simplified to binary/ternary,
-    // but they still encode essential constraints.  Removing them would
-    // lose these constraints and produce incorrect models (violations).
-    // The simplified unit/binary/ternary clauses help CDCL propagation
-    // while the originals ensure correctness of the final model.
+    // Keep original XOR clauses alongside Gaussian-simplified ones.
+    // The 128 binary basis clauses help propagation (size-2 checks are fast),
+    // but cannot fully replace the originals when linear combination paths
+    // are not tracked during solving.
     printf ("c Gauss result: %d units, %d binaries, %d ternaries, %d skipped (4+), %d rows\n",
             units, binaries, ternaries, skipped, rows);
 

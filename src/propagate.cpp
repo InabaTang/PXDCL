@@ -372,34 +372,26 @@ bool Internal::propagate () {
     LOG ("propagating %d", -lit);
     //printf("propagate %d\n", -lit);
 
-    // if (opts.unionset)
-    // {
-    //   unsigned eqvStart = _eqvRelationSize;
-    //   //cout << "lit: " << lit << endl;
-    //   const Eqvmap &eqvMap = _eqvMaps[vlit(lit)];
-    //   //cout << "eqvMap size : " << eqvMap.size() << ' ' <<  _eqvMaps[vlit(lit)].size() << endl;
-    //   for (auto &pr : eqvMap)
-    //   {
-    //     //cout << "eqvMap: " << pr.first << " " << pr.second << " " << endl;
-    //     if (pr.first < pr.second) AddEqvRelation(pr.first, pr.second, lit);
-    //   }
+    if (opts.unionset)
+    {
+      unsigned eqvStart = _eqvRelationSize;
+      const Eqvmap &eqvMap = _eqvMaps[vlit(lit)];
+      for (auto &pr : eqvMap)
+      {
+        if (pr.first < pr.second) AddEqvRelation(pr.first, pr.second, lit);
+      }
 
-    //   _xorConflict = EqvPropagation(eqvStart);
-    //   if (_xorConflict.size() != 0)
-    //   {
-    //     clause = _xorConflict;
-    //     int jump = 0;
-    //     xor_conflict_clause = new_driving_clause(clause.size(), jump);
-    //     // if (xor_conflict_clause[xor_con_size])
-    //     // {
-    //     //   printf("xor conflict clause\n");
-    //     //   pri_val_clause(xor_conflict_clause[xor_con_size]);
-    //     // }
-    //     conflict = xor_conflict_clause;
-    //     clause.clear();
-    //     return !conflict;
-    //   }
-    // }
+      _xorConflict = EqvPropagation(eqvStart);
+      if (_xorConflict.size() != 0)
+      {
+        clause = _xorConflict;
+        int jump = 0;
+        xor_conflict_clause = new_driving_clause(clause.size(), jump);
+        conflict = xor_conflict_clause;
+        clause.clear();
+        return !conflict;
+      }
+    }
 
     Watches &ws = watches (lit);
     XorWatches &xws = xor_watches (abs(lit));

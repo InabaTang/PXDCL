@@ -794,8 +794,6 @@ void Internal::preprocess_quickly (bool always) {
          "starting with %" PRId64 " variables and %" PRId64 " clauses",
          before.vars, before.clauses);
 
-  // extract_gates() on mixed clauses is extremely expensive (4096 clauses
-  // with hundreds of variables each).  Skip it when mixed clauses exist.
   if (mixed_clauses.empty () && extract_gates (true))
     decompose ();
   binary_clauses_backbone ();
