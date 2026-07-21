@@ -1046,43 +1046,17 @@ void Internal::mega_check () {
     Clause *c = mixed_clauses[ci];
     if (!c || c->garbage || !c->mixed_flag) continue;
 
-    // Verify all literals are actually assigned (counter drift defense)
-    bool all_assigned = true;
-    for (int i = 0; i < c->size; i++) {
-      if (!val (c->literals[i])) {
-        all_assigned = false;
-        break;
-      }
+    // mixed_parity is maintained incrementally during search_assign:
+    // each bit tracks the parity of that block's assigned literals.
+    // When all literals are assigned (counter == size), mixed_parity==0
+    // means all blocks have even parity → CONFLICT.
+    if (c->mixed_parity == 0) {
+      conflict = c;
+      stats.mixed_conflicts++;
+      LOG (c, "MEGA mixed clause conflict");
+      break;
     }
-    if (!all_assigned) continue;
-
-    const int *offsets = c->block_offsets ();
-    const int nb = c->mixed_num_blocks;
-    bool any_satisfied = false;
-
-    for (int bi = 0; bi < nb; bi++) {
-      int bs = (bi == 0) ? 0 : offsets[bi - 1];
-      int be = offsets[bi];
-      bool parity = false;
-      bool block_all_assigned = true;
-      for (int j = bs; j < be; j++) {
-        int v = val (c->literals[j]);
-        if (!v) { block_all_assigned = false; break; }
-        if (v > 0) parity = !parity;
-      }
-      if (block_all_assigned && parity) {
-        any_satisfied = true;
-        break;
-      }
-    }
-
-    if (any_satisfied) continue; // clause is SAT
-
-    // All blocks are fully assigned and none is SAT → CONFLICT
-    conflict = c;
-    stats.mixed_conflicts++;
-    LOG (c, "MEGA mixed clause conflict");
-    break;
+    // mixed_parity != 0 → at least one block has odd parity → SAT.
   }
 
   mixed_full_clauses.clear ();
