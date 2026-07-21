@@ -369,26 +369,16 @@ int Internal::gauss_old_elimination()
         xor_clause_flag = false;
         NextRow: ;
     }
-    // Mark original XOR clauses as garbage (replaced by simplified ones).
-    // Original clauses are in saved_original_clauses for verification.
-    // XOR analyze_reason now uses temporary copy (no in-place mutation),
-    // so the garbage marking is safe for correctness.
-    for (int row = 0; row < rows; row++) {
-      Clause *c = xor_clauses[row];
-      if (c && !c->garbage) {
-        mark_garbage (c);
-      }
-    }
-    // Remove garbage references from xor_clauses
-    xor_clauses.erase (
-        remove_if (xor_clauses.begin (), xor_clauses.end (),
-                   [](Clause *c) { return !c || c->garbage; }),
-        xor_clauses.end ());
+    // Keep original XOR clauses alongside simplified ones.
+    // XOR clauses with 4+ variables cannot be simplified to binary/ternary,
+    // but they still encode essential constraints.  Removing them would
+    // lose these constraints and produce incorrect models (violations).
+    // The simplified unit/binary/ternary clauses help CDCL propagation
+    // while the originals ensure correctness of the final model.
+    printf ("c Gauss result: %d units, %d binaries, %d ternaries, %d skipped (4+), %d rows\n",
+            units, binaries, ternaries, skipped, rows);
 
     mzd_free(mat);
-    printf ("c Gauss result: %d units, %d binaries, %d ternaries, %d skipped (4+), %d empty\n",
-            units, binaries, ternaries, skipped, rows - units - binaries - ternaries - skipped);
-
     return true;
 }
 
