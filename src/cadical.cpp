@@ -909,7 +909,9 @@ int App::main (int argc, char **argv) {
   // Verifies ALL original clauses (before any simplification) against
   // the final model.  Uses internal->val() for parity checks because
   // solver->val() returns the TRUE PHASE (always positive).
-  if (res == 10) {
+  // Controlled by --checkwitness (default 1).  Set --checkwitness=0 to
+  // disable verification.
+  if (res == 10 && solver->get ("checkwitness")) {
     auto *internal = solver->internal;
     // Expand model: eliminated variable v has same truth as literal repr.
     // Iterate until stable to resolve chains (e.g., 1→321→-449).
