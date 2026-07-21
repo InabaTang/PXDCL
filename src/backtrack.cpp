@@ -287,6 +287,7 @@ void Internal::backtrack_without_updating_phases (int new_level) {
       }
     }
     lost_mixed_watches.clear ();
+    lost_mixed_set.clear ();
   }
 
   assert (num_assigned == trail.size ());

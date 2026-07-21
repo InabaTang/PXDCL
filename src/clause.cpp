@@ -920,11 +920,9 @@ void Internal::build_var_to_mixed_index () {
 }
 
 void Internal::schedule_mixed_reconnect (Clause *c) {
-  // Avoid duplicates
-  for (auto existing : lost_mixed_watches)
-    if (existing == c)
-      return;
-  lost_mixed_watches.push_back (c);
+  // O(1) dedup via unordered_set lookup, preserve insertion order in vector
+  if (lost_mixed_set.insert (c).second)
+    lost_mixed_watches.push_back (c);
 }
 
 } // namespace CaDiCaL

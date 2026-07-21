@@ -35,6 +35,7 @@ extern "C" {
 
 #include <algorithm>
 #include <queue>
+#include <set>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -382,7 +383,9 @@ struct Internal {
 
   // Watch-loss tracking (Plan C): set of mixed clauses that lost watches
   // during propagation and need re-watching on backtrack.
+  // Uses vector (preserves insertion order) + unordered_set (O(1) dedup).
   vector<Clause *> lost_mixed_watches;
+  unordered_set<Clause *> lost_mixed_set;
   void schedule_mixed_reconnect (Clause *c);
 
   // for SEGA: lazy evaluation of long XOR clauses (size > 5)
