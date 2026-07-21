@@ -16,7 +16,8 @@ namespace CaDiCaL {
 
 bool Internal::minimize_literal (int lit, int depth) {
   LOG ("attempt to minimize lit %d at depth %d", lit, depth);
-  assert (val (lit) > 0);
+  if (val (lit) <= 0)
+    return false; // not assigned TRUE: can't minimize (XOR/mixed edge case)
   Flags &f = flags (lit);
   Var &v = var (lit);
   if (!v.level || f.removable || f.keep)
@@ -43,6 +44,10 @@ bool Internal::minimize_literal (int lit, int depth) {
     }
   }
   assert (v.reason != external_reason);
+  // Skip XOR/mixed clause reasons: their literal signs do not follow
+  // the all-FALSE-except-one pattern that recursive minimization expects.
+  if (v.reason->xor_flag || v.reason->mixed_flag)
+    return false;
   const const_literal_iterator end = v.reason->end ();
   const_literal_iterator i;
   for (i = v.reason->begin (); res && i != end; i++) {

@@ -1273,8 +1273,7 @@ void Internal::analyze () { //Find : analyze
     int conflict_size = 0;   // without the uip and without unit literals
     int resolved = 0;        // number of resolution (0 = clause in CNF)
     int for_cnt = 0;
-    //const bool otfs = opts.otfs;
-    const bool otfs = false;
+    const bool otfs = false;  // disabled: incompatible with XOR clause signs
 
     for (;;) {
       for_cnt ++;
@@ -1474,13 +1473,10 @@ void Internal::analyze () { //Find : analyze
   // MiniSAT and described in our joint SAT'09 paper.
   //
   if (size > 1) {
-    // Clause minimization (minimize/shrink) is disabled because it
-    // interacts badly with XOR clause mutation in analyze_reason().
-    // XOR clauses are permanently mutated (true→false flip) during
-    // 1-UIP analysis, which breaks recursive minimization.
-    // Re-enabling causes 5-10x performance regression on XOR instances.
-    // if (opts.minimize)
-    //   minimize_clause ();
+    // Re-enabled: analyze_reason() now uses flipped copies instead of
+    // in-place mutation, making recursive minimization safe for XOR clauses.
+    if (opts.minimize)
+      minimize_clause ();
 
     size = (int) clause.size ();
 
