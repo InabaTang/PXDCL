@@ -193,6 +193,7 @@ void Internal::init_vars (int new_max_var) { // Find : init_eqv
   stats.unused += initialized;
   stats.inactive += initialized;
   LOG ("finished initializing %d internal variables", initialized);
+  trail.reserve (max_var + 1); // avoid realloc during search_assign
 }
 
 void Internal::add_original_lit (int lit) {
