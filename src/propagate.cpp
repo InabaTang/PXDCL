@@ -68,21 +68,6 @@ void Internal::build_chain_for_units (int lit, Clause *reason,
   assert (lrat_chain.empty ());
 
   if (reason && reason->xor_flag) {
-    literal_iterator lits = reason->begin ();
-    int size = reason->size;
-
-    bool xor_result = false;
-    for (int i = 0; i < size; i++) {
-      int reason_lit = lits[i];
-      if (lit == reason_lit)
-        continue;
-      assert (val (reason_lit));
-      if (!val (reason_lit))
-        continue;
-      bool lit_value = (val (reason_lit) > 0);
-      xor_result ^= lit_value;
-    }
-
     for (auto &reason_lit : *reason) {
       if (lit == reason_lit)
         continue;
@@ -381,15 +366,21 @@ bool Internal::propagate () {
         if (pr.first < pr.second) AddEqvRelation(pr.first, pr.second, lit);
       }
 
-      _xorConflict = EqvPropagation(eqvStart);
-      if (_xorConflict.size() != 0)
-      {
-        clause = _xorConflict;
-        int jump = 0;
-        xor_conflict_clause = new_driving_clause(clause.size(), jump);
-        conflict = xor_conflict_clause;
-        clause.clear();
-        return !conflict;
+      // Lazy: run EqvPropagation every 1000 propagations for batching
+      if (propagate_counter == 0)
+        _lazyEqvStart = eqvStart;
+      if (++propagate_counter >= 1000) {
+        propagate_counter = 0;
+        _xorConflict = EqvPropagation(_lazyEqvStart);
+        if (_xorConflict.size() != 0)
+        {
+          clause = _xorConflict;
+          int jump = 0;
+          xor_conflict_clause = new_driving_clause(clause.size(), jump);
+          conflict = xor_conflict_clause;
+          clause.clear();
+          return !conflict;
+        }
       }
     }
 

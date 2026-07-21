@@ -21,7 +21,7 @@ Internal::Internal ()
       newest_clause (0), force_no_backtrack (false),
       from_propagator (false), ext_clause_forgettable (false),
       changed_val (0), notified (0), probe_reason (0), propagated (0),
-      propagated2 (0), propergated (0), best_assigned (0),
+      propagated2 (0), propergated (0), propagate_counter (0), best_assigned (0),
       target_assigned (0), no_conflict_until (0), unsat_constraint (false),
       marked_failed (true), sweep_incomplete (false),
       randomized_deciding (false), citten (0), num_assigned (0), proof (0),
@@ -1011,122 +1011,6 @@ int Internal::local_search () {
 
 /*------------------------------------------------------------------------*/
 
-// Apply variable substitution based on binary XOR equivalences.
-// Binary XOR (a XOR b = TRUE) → a = -b, so we can eliminate one variable
-// per equivalence class by substituting it with the representative.
-void Internal::apply_binary_xor_substitution () {
-  if (xor_clauses.empty ()) return;
-
-  // Step 1: Build union-find over literals from all binary XOR clauses.
-  int n = max_var + 1;
-  vector<int> uf_parent (2 * n + 2);
-  for (int i = 0; i <= 2 * n + 1; i++) uf_parent[i] = i;
-  auto uf_find = [&](int x) -> int {
-    int root = x;
-    while (uf_parent[root] != root) root = uf_parent[root];
-    while (x != root) { int nx = uf_parent[x]; uf_parent[x] = root; x = nx; }
-    return root;
-  };
-  auto uf_union = [&](int a, int b) {
-    int ra = uf_find (a), rb = uf_find (b);
-    if (ra != rb) uf_parent[ra] = rb;
-  };
-  auto enc = [](int lit) { return 2 * abs (lit) + (lit < 0); };
-
-  int binary_count = 0;
-  for (auto c : xor_clauses) {
-    if (!c || c->garbage) continue;
-    if (c->size != 2) continue;
-    binary_count++;
-    int a = c->literals[0], b = c->literals[1];
-    uf_union (enc (a), enc (-b));
-    uf_union (enc (-a), enc (b));
-  }
-  if (binary_count == 0) return;
-
-  // Step 2: For each variable, find its equivalence class.
-  vector<int> subst (n, 0);
-  int eliminated = 0;
-  for (int v = 1; v <= max_var; v++) {
-    int r = uf_find (enc (v));
-    int repr_lit = (r & 1) ? -(r / 2) : (r / 2);
-    if (repr_lit != v) { subst[v] = repr_lit; eliminated++; }
-  }
-  if (eliminated == 0) return;
-
-  printf ("c Substitution: eliminating %d / %d variables (%d binary XOR)\n",
-          eliminated, max_var, binary_count);
-
-  // Step 3: Apply substitution to all clauses.
-  auto subst_lit = [&](int lit) -> int {
-    int v = abs (lit);
-    if (v < n && subst[v] != 0)
-      return (lit > 0) ? subst[v] : -subst[v];
-    return lit;
-  };
-
-  int tautologies = 0;
-  for (auto c : clauses) {
-    if (c->garbage) continue;
-    bool changed = false;
-    for (int i = 0; i < c->size; i++) {
-      int old_lit = c->literals[i];
-      int new_lit = subst_lit (old_lit);
-      if (new_lit != old_lit) {
-        c->literals[i] = new_lit;
-        changed = true;
-      }
-    }
-    if (!changed) continue;
-
-    if (c->mixed_flag) {
-      // Mixed clauses: just apply substitution.  Do NOT check for
-      // tautologies within blocks — a⊕¬a⊕X is NOT a tautology.
-      // Block offsets remain valid (same positions, new literals).
-      continue;
-    } else {
-      for (int i = 0; i < c->size; i++)
-        for (int j = i + 1; j < c->size; j++)
-          if (c->literals[i] == -c->literals[j])
-            goto tautology;
-      int w = 0;
-      for (int i = 0; i < c->size; i++) {
-        int lit = c->literals[i];
-        bool dup = false;
-        for (int j = 0; j < w; j++)
-          if (c->literals[j] == lit) { dup = true; break; }
-        if (!dup) c->literals[w++] = lit;
-      }
-      if (w < c->size) { c->size = w; if (c->pos >= w) c->pos = 2; }
-    }
-    continue;
-  tautology:
-    c->garbage = true; tautologies++;
-  }
-
-  // Step 4: Rebuild watches.
-  clear_watches ();
-  connect_watches ();
-
-  // Save substitution map for model expansion and verification.
-  subst_map = subst;
-
-  // Remove garbage from xor_clauses and mixed_clauses
-  xor_clauses.erase (
-      remove_if (xor_clauses.begin (), xor_clauses.end (),
-                 [](Clause *c) { return !c || c->garbage; }),
-      xor_clauses.end ());
-  mixed_clauses.erase (
-      remove_if (mixed_clauses.begin (), mixed_clauses.end (),
-                 [](Clause *c) { return !c || c->garbage; }),
-      mixed_clauses.end ());
-
-  printf ("c Substitution done: %zu clauses, %d tautologies removed\n",
-          clauses.size (), tautologies);
-}
-
-/*------------------------------------------------------------------------*/
-
 // if preprocess_only is false and opts.ilb is true we do not preprocess
 // such that we do not have to backtrack to level 0.
 //
@@ -1154,12 +1038,6 @@ int Internal::solve (bool preprocess_only) { // Find : Internal solve
   else
     LOG ("internal solving in full mode");
   init_report_limits ();
-  // Apply variable substitution from binary XOR equivalences FIRST,
-  // before building MEGA index (substitution changes clause literals
-  // and variable indices, so MEGA must see the final state).
-  if (opts.unionset && !unsat) {
-    apply_binary_xor_substitution ();
-  }
   // Build mixed clause variable index after all clauses are parsed
   // Also initialize MEGA counters for lazy mixed clause evaluation
   if (!mixed_clauses.empty ()) {

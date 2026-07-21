@@ -263,6 +263,7 @@ struct Internal {
   size_t propagated;         // next trail position to propagate
   size_t propagated2;        // next binary trail position to propagate
   size_t propergated;        // propagated without blocking literals
+  size_t propagate_counter;  // counter for lazy EqvPropagation batching
   size_t best_assigned;      // best maximum assigned ever
   size_t target_assigned;    // maximum assigned without conflict
   size_t no_conflict_until;  // largest trail prefix without conflict
@@ -377,7 +378,6 @@ struct Internal {
   // mixed_full_clauses for conflict checking.
   vector<int> mixed_clause_counter;          // assigned-literal count per clause
   vector<int> mixed_full_clauses;            // indices of fully-assigned clauses
-  vector<int> subst_map;                     // binary XOR substitution map
   void mega_check();                         // check fully-assigned mixed clauses
 
   // Watch-loss tracking (Plan C): set of mixed clauses that lost watches
@@ -873,7 +873,6 @@ struct Internal {
   Clause *new_clause_as (const Clause *orig);
   Clause *new_resolved_irredundant_clause ();
   void build_var_to_mixed_index ();
-void apply_binary_xor_substitution ();
 
   // Forward reasoning through propagation in 'propagate.cpp'.
   //
@@ -1963,6 +1962,7 @@ void apply_binary_xor_substitution ();
 
   // for xor union
   int _eqvRelationSize;
+  int _lazyEqvStart;        // batch start for lazy EqvPropagation
   int *_eqvReasons;
   UnionSet *_xorUnion;
   Eqvmap *_eqvMaps;

@@ -213,6 +213,7 @@ void Internal::backtrack_without_updating_phases (int new_level) {
   {
     _eqvRelationSize = _lv2EqvRelation[level];
     _xorUnion->BackJump(new_level);
+    propagate_counter = 0;  // reset lazy batch on backtrack
   }
 
   // Plan A: Rebuild mixed clause watches that were lost during propagation
