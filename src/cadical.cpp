@@ -915,8 +915,13 @@ int App::main (int argc, char **argv) {
     int or_violations = 0, xor_violations = 0, mixed_violations = 0;
 
     // Check saved original clauses (before any simplification)
+    // Only verify the first 'parsed_clauses_count' entries — these are
+    // the original XNF clauses.  Gaussian elimination may add additional
+    // simplified clauses to saved_original_clauses which are covered by
+    // the originals; we skip them here to avoid double-counting.
     uint64_t expected = internal->parsed_clauses_count;
-    for (size_t oi = 0; oi < internal->saved_original_clauses.size(); oi++) {
+    size_t total_saved = internal->saved_original_clauses.size();
+    for (size_t oi = 0; oi < expected && oi < total_saved; oi++) {
       auto &orig = internal->saved_original_clauses[oi];
       verified++;
       const auto &lits = orig.lits;
