@@ -36,8 +36,8 @@ contrib=yes
 ipasir=yes
 shared=no
 pic=no
-enable_m4ri=no
-with_m4ri="/home/lijq/XORSAT/XDCL/cadical/m4ri"
+enable_m4ri=yes
+with_m4ri="/home/lijq/XORSAT/PXDCL/cadical/m4ri"
 
 #--------------------------------------------------------------------------#
 
@@ -386,6 +386,12 @@ fi
 [ $contrib = no ] && CFLAGS="$CFLAGS -DNCONTRIB"
 [ $ipasir = no ] && CFLAGS="$CFLAGS -DNIPASIR"
 [ $shared = yes -a $pic = no ] && CFLAGS="$CFLAGS -fpic"
+
+# Static-link libstdc++/libgcc for runtime portability: the build compiler
+# (GCC 11) ships libstdc++.so.6.0.29 (GLIBCXX_3.4.29) but target systems
+# may only have up to GLIBCXX_3.4.24.  Static linking makes the binary
+# self-contained with no external libstdc++ dependency.
+CXXFLAGS="$CXXFLAGS -static-libstdc++ -static-libgcc"
 
 CXXFLAGS="$CXXFLAGS$options"
 CFLAGS="$CFLAGS$options"

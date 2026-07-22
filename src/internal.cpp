@@ -21,7 +21,7 @@ Internal::Internal ()
       newest_clause (0), force_no_backtrack (false),
       from_propagator (false), ext_clause_forgettable (false),
       changed_val (0), notified (0), probe_reason (0), propagated (0),
-      propagated2 (0), propergated (0), propagate_counter (0), best_assigned (0),
+      propagated2 (0), propergated (0), best_assigned (0),
       target_assigned (0), no_conflict_until (0), unsat_constraint (false),
       marked_failed (true), sweep_incomplete (false),
       randomized_deciding (false), citten (0), num_assigned (0), proof (0),
@@ -195,7 +195,6 @@ void Internal::init_vars (int new_max_var) { // Find : init_eqv
   stats.unused += initialized;
   stats.inactive += initialized;
   LOG ("finished initializing %d internal variables", initialized);
-  trail.reserve (max_var + 1); // avoid realloc during search_assign
 }
 
 void Internal::add_original_lit (int lit) {
@@ -351,13 +350,6 @@ int Internal::cdcl_loop_with_inprocessing () {
       sega();
     }
     else {
-      // GF(2) theory engine: disabled by default.
-      // Periodic Gaussian elimination on XOR subsystem finds theory
-      // implications but adds ~5-10% overhead with marginal benefit
-      // on SAT instances. May help UNSAT instances with overconstrained
-      // XOR subsystems.
-      // if (gf2_engine && (stats.conflicts & 1023) == 512)
-      //   gf2_engine->propagate ();
       if (stats.conflicts >= lim.xor_boost) {
         bump_near_full_xor();
         lim.xor_boost = stats.conflicts + 100;
@@ -878,7 +870,6 @@ int Internal::preprocess (bool always) {
   if (!xor_clauses.empty ()) {
     rebuild_sega_data ();
     rebuild_xor_occs ();
-    // Create GF(2) theory engine lazily after preprocessing
     if (!gf2_engine)
       gf2_engine = new GF2Engine (this);
   }
@@ -1026,10 +1017,9 @@ int Internal::local_search () {
 
 /*------------------------------------------------------------------------*/
 
-// Substitute variables that are equivalent via binary XOR clauses (size==2).
-// a⊕b=TRUE  ⇔  a = -b,   a⊕b=FALSE  ⇔  a = b.
-// Builds a union-find over literals, picks one representative per equivalence
-// class, and replaces all occurrences of eliminated variables in every clause.
+// Apply variable substitution based on binary XOR equivalences.
+// Binary XOR (a XOR b = TRUE) → a = -b, so we can eliminate one variable
+// per equivalence class by substituting it with the representative.
 void Internal::apply_binary_xor_substitution () {
   if (xor_clauses.empty ()) return;
 
@@ -1060,7 +1050,7 @@ void Internal::apply_binary_xor_substitution () {
   }
   if (binary_count == 0) return;
 
-  // Step 2: Find equivalence class representatives.
+  // Step 2: For each variable, find its equivalence class.
   vector<int> subst (n, 0);
   int eliminated = 0;
   for (int v = 1; v <= max_var; v++) {
@@ -1088,24 +1078,25 @@ void Internal::apply_binary_xor_substitution () {
     for (int i = 0; i < c->size; i++) {
       int old_lit = c->literals[i];
       int new_lit = subst_lit (old_lit);
-      if (new_lit != old_lit) { c->literals[i] = new_lit; changed = true; }
+      if (new_lit != old_lit) {
+        c->literals[i] = new_lit;
+        changed = true;
+      }
     }
     if (!changed) continue;
 
     if (c->mixed_flag) {
+      // Mixed clauses: just apply substitution.  Do NOT check for
+      // tautologies within blocks — a⊕¬a⊕X is NOT a tautology.
+      // Block offsets remain valid (same positions, new literals).
       continue;
     } else {
-      // Check for tautologies (a v -a) and mark for proper garbage collection
       bool is_tautology = false;
       for (int i = 0; i < c->size; i++)
         for (int j = i + 1; j < c->size; j++)
-          if (c->literals[i] == -c->literals[j]) { is_tautology = true; break; }
-      if (is_tautology) {
-        mark_garbage (c);
-        tautologies++;
-        continue;
-      }
-      // Remove duplicate literals
+          if (c->literals[i] == -c->literals[j])
+            is_tautology = true;
+      if (is_tautology) { mark_garbage (c); tautologies++; continue; }
       int w = 0;
       for (int i = 0; i < c->size; i++) {
         int lit = c->literals[i];
@@ -1116,17 +1107,16 @@ void Internal::apply_binary_xor_substitution () {
       }
       if (w < c->size) { c->size = w; if (c->pos >= w) c->pos = 2; }
     }
-    continue;
   }
 
   // Step 4: Rebuild watches.
   clear_watches ();
   connect_watches ();
 
-  // Save for model expansion.
+  // Save substitution map for model expansion and verification.
   subst_map = subst;
 
-  // Clean up garbage from xor_clauses and mixed_clauses.
+  // Remove garbage from xor_clauses and mixed_clauses
   xor_clauses.erase (
       remove_if (xor_clauses.begin (), xor_clauses.end (),
                  [](Clause *c) { return !c || c->garbage; }),
@@ -1139,6 +1129,8 @@ void Internal::apply_binary_xor_substitution () {
   printf ("c Substitution done: %zu clauses, %d tautologies removed\n",
           clauses.size (), tautologies);
 }
+
+/*------------------------------------------------------------------------*/
 
 // if preprocess_only is false and opts.ilb is true we do not preprocess
 // such that we do not have to backtrack to level 0.
