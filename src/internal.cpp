@@ -867,6 +867,8 @@ int Internal::preprocess (bool always) {
   // Run AFTER Gauss so Gauss can first use binary XORs for constraints.
   // Only apply on larger instances (>2500 vars) where the reduction in
   // problem size outweighs the loss of binary XOR constraint information.
+  // Adaptive: only apply substitution after Gauss has already extracted
+  // binary constraints.  Skip on small instances where Gauss alone suffices.
   if (opts.unionset && !xor_clauses.empty () && !unsat && max_var > 2500)
     apply_binary_xor_substitution ();
 
