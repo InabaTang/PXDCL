@@ -71,6 +71,7 @@ extern "C" {
 #include "format.hpp"
 #include "frattracer.hpp"
 #include "gauss.hpp"
+#include "gf2_engine.hpp"
 #include "heap.hpp"
 #include "idruptracer.hpp"
 #include "instantiate.hpp"
@@ -132,6 +133,7 @@ class UnionSet;
 struct XorLine;
 struct SegmentTree;
 struct Gauss_line_xs;
+class GF2Engine;
 
 struct CubesWithStatus {
   int status = 0;
@@ -364,6 +366,8 @@ struct Internal {
   int xor_boost_interval;         // adaptive interval for bump_near_full_xor
   int xor_phase_enabled;          // whether XOR-aware phase selection is active
 
+  // GF(2) theory engine for CEGAR-style Gaussian elimination during search
+  GF2Engine *gf2_engine;
 
   // for xor gauss
   int xor_clause_number; // not include gauss clause

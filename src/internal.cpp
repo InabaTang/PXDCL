@@ -26,7 +26,8 @@ Internal::Internal ()
       marked_failed (true), sweep_incomplete (false),
       randomized_deciding (false), citten (0), num_assigned (0), proof (0),
       opts (this), xor_conflict_ema (0), xor_clause_count (0),
-      xor_boost_interval (100), xor_phase_enabled (0), xor_kdd (500),
+      xor_boost_interval (100), xor_phase_enabled (0),
+      gf2_engine (0), xor_kdd (500),
       // Initialize mixed clause parsing state
       mixed_clause_flag (0), mixed_clause_start (0),
 #ifndef QUIET
@@ -350,6 +351,11 @@ int Internal::cdcl_loop_with_inprocessing () {
       sega();
     }
     else {
+      // GF(2) theory engine: periodic Gaussian elimination on XOR subsystem.
+      // Uses SEGA-tracked clause data (safe against GC) to find theory
+      // implications that span multiple XOR clauses.
+      if (gf2_engine && (stats.conflicts & 1023) == 512)
+        gf2_engine->propagate ();
       if (stats.conflicts >= lim.xor_boost) {
         bump_near_full_xor();
         lim.xor_boost = stats.conflicts + 100;
@@ -870,6 +876,9 @@ int Internal::preprocess (bool always) {
   if (!xor_clauses.empty ()) {
     rebuild_sega_data ();
     rebuild_xor_occs ();
+    // Create GF(2) theory engine lazily after preprocessing
+    if (!gf2_engine)
+      gf2_engine = new GF2Engine (this);
   }
   for (int i = 0; i < lim.preprocessing; i++)
     if (!preprocess_round (i))
