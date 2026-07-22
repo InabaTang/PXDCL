@@ -138,6 +138,15 @@ int Internal::decide_phase (int idx, bool target) {
     phase = initial_phase;
     LOG ("trying initial phase, i.e., %d", phase);
   }
+  // XOR-aware phase: use precomputed phase from xor_phases table.
+  // Only used at root level (before any decisions) to set initial search
+  // direction. After conflicts accumulate, the solver's phase saving and
+  // VSIDS provide more informed guidance.
+  if (!phase && xor_phase_enabled && !level && idx > 0 && idx <= max_var &&
+      (size_t)idx < xor_phases.size() && xor_phases[idx] != 0) {
+    phase = xor_phases[idx];
+    LOG ("trying XOR-aware phase %d for variable %d", phase, idx);
+  }
   if (!phase && target) {
     phase = phases.target[idx];
   }

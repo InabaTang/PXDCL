@@ -236,6 +236,8 @@ struct Internal {
   double score_inc;             // current score increment
   ScoreSchedule scores;         // score based decision priority queue
   vector<double> stab;          // table of variable scores [1,max_var]
+  vector<int> xor_occs;         // XOR clause occurrence count per variable [1,max_var]
+  vector<int> xor_phases;       // precomputed XOR-aware phase per variable [1,max_var]
   vector<Var> vtab;             // variable table [1,max_var]
   vector<int> parents;          // parent literals during probing
   vector<Flags> ftab;           // variable and literal flags
@@ -263,6 +265,7 @@ struct Internal {
   size_t propagated;         // next trail position to propagate
   size_t propagated2;        // next binary trail position to propagate
   size_t propergated;        // propagated without blocking literals
+  size_t propagate_counter;  // counter for lazy EqvPropagation batching
   size_t best_assigned;      // best maximum assigned ever
   size_t target_assigned;    // maximum assigned without conflict
   size_t no_conflict_until;  // largest trail prefix without conflict
@@ -354,7 +357,12 @@ struct Internal {
   void bump_near_full_xor();      // boost scores for near-full XOR clauses
   void bump_xor_variable_scores(); // initial score boost for XOR variables
   void rebuild_sega_data();       // rebuild SEGA tracking after preprocessing
+  void rebuild_xor_occs();        // rebuild XOR occurrence counts
+  int xor_aware_phase(int idx);   // XOR-weighted phase selection
   double xor_conflict_ema;        // EMA of XOR conflict ratio for adaptive restart
+  int xor_clause_count;           // total XOR clause count for density tracking
+  int xor_boost_interval;         // adaptive interval for bump_near_full_xor
+  int xor_phase_enabled;          // whether XOR-aware phase selection is active
 
 
   // for xor gauss
@@ -1961,6 +1969,7 @@ struct Internal {
 
   // for xor union
   int _eqvRelationSize;
+  int _lazyEqvStart;        // batch start for lazy EqvPropagation
   int *_eqvReasons;
   UnionSet *_xorUnion;
   Eqvmap *_eqvMaps;

@@ -120,6 +120,9 @@ void Internal::rebuild_sega_data()
 // the very beginning of search, rather than discovering them gradually.
 void Internal::bump_xor_variable_scores()
 {
+    // First rebuild XOR occurrence table for accurate counts
+    rebuild_xor_occs();
+
     // Boost variables in all XOR clauses (both short and long)
     for (size_t i = 0; i < xor_clauses.size(); i++) {
         Clause *c = xor_clauses[i];
@@ -132,6 +135,84 @@ void Internal::bump_xor_variable_scores()
                 bump_variable_score(lit);
         }
     }
+
+    // Enable XOR-aware phase selection for XOR-dense instances
+    xor_phase_enabled = (xor_clause_count >= 100) ? 1 : 0;
+}
+
+// XOR-aware phase selection: returns preferred phase for a variable
+// based on precomputed xor_phases table (built in rebuild_xor_occs).
+// This is O(1) — safe to call from decide_phase even after GC.
+int Internal::xor_aware_phase(int idx)
+{
+    if (!xor_phase_enabled) return 0;
+    if (idx <= 0 || idx > max_var) return 0;
+    if ((size_t)idx >= xor_phases.size()) return 0;
+    return xor_phases[idx];
+}
+
+// Build XOR occurrence table and precompute XOR-aware phases.
+// Called once during preprocessing, before the search phase.
+void Internal::rebuild_xor_occs()
+{
+    while ((int) xor_occs.size () <= max_var)
+        xor_occs.push_back (0);
+    for (int i = 1; i <= max_var; i++)
+        xor_occs[i] = 0;
+
+    // Also resize and zero the phase cache
+    while ((int) xor_phases.size () <= max_var)
+        xor_phases.push_back (0);
+
+    // Temporary: count positive vs negative occurrences per variable
+    vector<int> pos_cnt, neg_cnt;
+    while ((int) pos_cnt.size () <= max_var)
+        pos_cnt.push_back (0);
+    while ((int) neg_cnt.size () <= max_var)
+        neg_cnt.push_back (0);
+
+    xor_clause_count = 0;
+    for (auto c : xor_clauses) {
+        if (c->garbage) continue;
+        xor_clause_count++;
+        for (int i = 0; i < c->size; i++) {
+            int lit = c->literals[i];
+            int v = abs (lit);
+            if (v > 0 && v <= max_var) {
+                xor_occs[v]++;
+                if (lit > 0) pos_cnt[v]++;
+                else neg_cnt[v]++;
+            }
+        }
+    }
+
+    // Also count mixed clauses (they contain XOR constraints)
+    for (auto c : mixed_clauses) {
+        if (c->garbage) continue;
+        for (int i = 0; i < c->size; i++) {
+            int lit = c->literals[i];
+            int v = abs (lit);
+            if (v > 0 && v <= max_var) {
+                xor_occs[v]++;
+                if (lit > 0) pos_cnt[v]++;
+                else neg_cnt[v]++;
+            }
+        }
+    }
+
+    // Precompute XOR-aware phases: prefer the more common polarity.
+    // Store ±1 (the sign), not the literal itself.
+    for (int i = 1; i <= max_var; i++) {
+        if (pos_cnt[i] > neg_cnt[i])
+            xor_phases[i] = 1;            // prefer positive
+        else if (neg_cnt[i] > pos_cnt[i])
+            xor_phases[i] = -1;           // prefer negative
+        else
+            xor_phases[i] = 0;            // tie → use default
+    }
+
+    // Enable XOR-aware phase selection for XOR-dense instances
+    xor_phase_enabled = (xor_clause_count >= 100) ? 1 : 0;
 }
 
 } // namespace CaDiCaL
