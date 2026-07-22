@@ -240,6 +240,7 @@ struct Internal {
   vector<double> stab;          // table of variable scores [1,max_var]
   vector<int> xor_occs;         // XOR clause occurrence count per variable [1,max_var]
   vector<int> xor_phases;       // precomputed XOR-aware phase per variable [1,max_var]
+  vector<int> subst_map;        // binary XOR substitution map [1,max_var]
   vector<Var> vtab;             // variable table [1,max_var]
   vector<int> parents;          // parent literals during probing
   vector<Flags> ftab;           // variable and literal flags
@@ -359,8 +360,9 @@ struct Internal {
   void bump_near_full_xor();      // boost scores for near-full XOR clauses
   void bump_xor_variable_scores(); // initial score boost for XOR variables
   void rebuild_sega_data();       // rebuild SEGA tracking after preprocessing
-  void rebuild_xor_occs();        // rebuild XOR occurrence counts
-  int xor_aware_phase(int idx);   // XOR-weighted phase selection
+  void rebuild_xor_occs();             // rebuild XOR occurrence counts
+  int xor_aware_phase(int idx);        // XOR-weighted phase selection
+  void apply_binary_xor_substitution();// eliminate vars from binary XOR eqvs
   double xor_conflict_ema;        // EMA of XOR conflict ratio for adaptive restart
   int xor_clause_count;           // total XOR clause count for density tracking
   int xor_boost_interval;         // adaptive interval for bump_near_full_xor

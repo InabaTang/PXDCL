@@ -911,6 +911,43 @@ int App::main (int argc, char **argv) {
   // solver->val() returns the TRUE PHASE (always positive).
   if (res == 10) {
     auto *internal = solver->internal;
+    // Expand model: eliminated variables via binary XOR substitution.
+    // Iterate to resolve chains (v1→±v2→±v3...).
+    if (!internal->subst_map.empty ()) {
+      auto &subst = internal->subst_map;
+      for (int pass = 0; pass < 10; pass++) {
+        bool changed = false;
+        for (int v = 1; v <= internal->max_var; v++) {
+          int r = subst[v];
+          if (r == 0) continue;
+          int av = abs (r);
+          if (av < (int) subst.size () && subst[av] != 0) {
+            int r2 = subst[av];
+            subst[v] = (r > 0) ? r2 : -r2;
+            changed = true;
+          }
+        }
+        if (!changed) break;
+      }
+      int expanded = 0;
+      for (int v = 1; v <= internal->max_var; v++) {
+        int repr = subst[v];
+        if (repr == 0) continue;
+        int val_repr = internal->val (repr);
+        if (val_repr != 0) {
+          int idx = internal->vidx (v);
+          if (internal->val (idx) != val_repr) {
+            internal->set_val (idx, val_repr);
+            expanded++;
+          }
+          auto *ext = solver->external;
+          if ((size_t) v < ext->vals.size ())
+            ext->vals[v] = (val_repr > 0);
+        }
+      }
+      if (expanded > 0)
+        printf ("c Model expansion: %d eliminated vars assigned\n", expanded);
+    }
     int violations = 0, verified = 0;
     int or_violations = 0, xor_violations = 0, mixed_violations = 0;
 
