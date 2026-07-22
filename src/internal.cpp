@@ -863,6 +863,13 @@ int Internal::preprocess (bool always) {
             after_xor, after_clauses);
   }
 
+  // Binary XOR substitution: eliminate variables from size-2 XOR clauses.
+  // Run AFTER Gauss so Gauss can first use binary XORs for constraints.
+  // Only apply on larger instances (>2500 vars) where the reduction in
+  // problem size outweighs the loss of binary XOR constraint information.
+  if (opts.unionset && !xor_clauses.empty () && !unsat && max_var > 2500)
+    apply_binary_xor_substitution ();
+
   if (!xor_clauses.empty())
     bump_xor_variable_scores();
 
@@ -1159,12 +1166,6 @@ int Internal::solve (bool preprocess_only) { // Find : Internal solve
   else
     LOG ("internal solving in full mode");
   init_report_limits ();
-  // Apply variable substitution from binary XOR equivalences FIRST,
-  // before building MEGA index (substitution changes clause literals
-  // and variable indices, so MEGA must see the final state).
-  if (opts.unionset && !unsat) {
-    apply_binary_xor_substitution ();
-  }
   // Build mixed clause variable index after all clauses are parsed
   // Also initialize MEGA counters for lazy mixed clause evaluation
   if (!mixed_clauses.empty ()) {
