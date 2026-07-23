@@ -1009,6 +1009,10 @@ int App::main (int argc, char **argv) {
                        violations, verified, expected);
       solver->message ("  OR: %d, XOR: %d, Mixed: %d violated",
                        or_violations, xor_violations, mixed_violations);
+      // Override SAT result: invalid solution means the solver produced
+      // a witness that does not actually satisfy all constraints.
+      // This can happen when XOR/mixed clause handling has bugs.
+      res = 0;  // override SAT → INVALID (unknown)
     }
   }
 
@@ -1019,6 +1023,8 @@ int App::main (int argc, char **argv) {
       print_witness (write_result_file);
   } else if (res == 20 && status)
     fputs ("s UNSATISFIABLE\n", write_result_file);
+  else if (!res && status)
+    fputs ("s INVALID\n", write_result_file);
   else if (status)
     fputs ("c UNKNOWN\n", write_result_file);
   fflush (write_result_file);

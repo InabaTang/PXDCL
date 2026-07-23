@@ -880,20 +880,23 @@ void Internal::build_var_to_mixed_index () {
   while ((int) var_to_mixed.size () <= max_var + 1)
     var_to_mixed.push_back ({});
 
-  // Initialize MEGA counters
+  // Initialize MEGA counters + per-block tracking for eager propagation
   mixed_clause_counter.resize (mixed_clauses.size (), 0);
+  mixed_block_cnt.resize (mixed_clauses.size ());
 
   for (int ci = 0; ci < (int) mixed_clauses.size (); ci++) {
     Clause *c = mixed_clauses[ci];
     if (!c || c->garbage) continue;
     const int *offsets = c->block_offsets ();
     int nb = c->mixed_num_blocks;
+    mixed_block_cnt[ci].resize (nb, 0);
 
     int assigned_count = 0;
 
     for (int bi = 0; bi < nb; bi++) {
       int bs = (bi == 0) ? 0 : offsets[bi - 1];
       int be = offsets[bi];
+      int block_assigned = 0;
 
       for (int j = bs; j < be; j++) {
         int lit = c->literals[j];
@@ -904,10 +907,13 @@ void Internal::build_var_to_mixed_index () {
         // Initialize parity from current assignments
         if (val (lit) > 0)
           c->mixed_parity ^= (1ULL << bi);
-        // Count already-assigned literals for MEGA
-        if (val (lit))
+        // Count already-assigned literals
+        if (val (lit)) {
           assigned_count++;
+          block_assigned++;
+        }
       }
+      mixed_block_cnt[ci][bi] = block_assigned;
     }
 
     mixed_clause_counter[ci] = assigned_count;

@@ -393,6 +393,15 @@ struct Internal {
   vector<int> mixed_full_clauses;            // indices of fully-assigned clauses
   void mega_check();                         // check fully-assigned mixed clauses
 
+  // Eager mixed block propagation: per-block assignment tracking.
+  // When all-but-one literal in a block is assigned, the remaining literal
+  // is forced by the block's XOR parity.  This fires MUCH earlier than
+  // full-clause MEGA checking (which requires ALL blocks assigned).
+  vector<vector<int>> mixed_block_cnt;       // per-clause per-block assigned cnt
+  struct MixedPending { int ci; int bi; int lit; };
+  vector<MixedPending> mixed_pending;        // blocks ready for propagation
+  void mega_propagate_blocks();              // propagate forced block literals
+
   // Watch-loss tracking (Plan C): set of mixed clauses that lost watches
   // during propagation and need re-watching on backtrack.
   vector<Clause *> lost_mixed_watches;

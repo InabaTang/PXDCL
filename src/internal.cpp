@@ -354,7 +354,46 @@ int Internal::cdcl_loop_with_inprocessing () {
         bump_near_full_xor();
         lim.xor_boost = stats.conflicts + 100;
       }
-      res = decide (); // next decision
+      // GF(2) theory engine: periodic XOR subsystem analysis.
+      // When implications are found → bump VSIDS (soft guidance).
+      // When conflict is found → generate conflict clause & backtrack.
+      if (gf2_engine && stats.conflicts >= lim.gf2_check) {
+        std::vector<int> imps = gf2_engine->check ();
+        if (!imps.empty () && imps[0] == -1) {
+          // GF(2) theory conflict: GF2Engine set conflict clause from
+          // current decisions.  Skip decide() and let the next loop
+          // iteration call propagate_wrapper() which will trigger
+          // analyze_wrapper() to learn a clause and backtrack.
+          printf ("c GF2: conflict at %" PRId64 " confl (level %d)\n",
+                  stats.conflicts, level);
+          lim.gf2_check = stats.conflicts + 4096;
+          conflict = 0;  // reset? No — GF2Engine already set it.
+          // Actually, the GF2Engine set internal->conflict via
+          // new_driving_clause.  We need to continue to let CDCL
+          // pick it up in the next loop iteration.
+          continue;  // skip decide(), re-enter loop → propagate finds conflict
+        }
+        if (!imps.empty ()) {
+          // Bump VSIDS for theory-implied variables
+          for (int lit : imps) {
+            int v = abs (lit);
+            if (v > 0 && v <= max_var && !val (v) && active (v)) {
+              if (use_scores ()) {
+                bump_variable_score (v);
+                bump_variable_score (v);
+                bump_variable_score (v);
+              }
+            }
+          }
+          static int gf2_msg_count = 0;
+          if ((++gf2_msg_count) % 20 == 1)
+            printf ("c GF2: #%zu imps at %" PRId64 " confl (msg #%d)\n",
+                    imps.size (), stats.conflicts, gf2_msg_count);
+        }
+        lim.gf2_check = stats.conflicts + 4096;
+      }
+      if (!conflict)  // skip decide if conflict was set by GF2
+        res = decide ();
     }
   }
 
@@ -602,6 +641,9 @@ void Internal::init_search_limits () {
 
   // XOR variable boost: start after 50 conflicts, then every 100 thereafter
   lim.xor_boost = stats.conflicts + 50;
+
+  // GF(2) theory engine: first check after 1000 conflicts, then every 4096
+  lim.gf2_check = stats.conflicts + 1000;
 
   /*----------------------------------------------------------------------*/
 
@@ -865,11 +907,9 @@ int Internal::preprocess (bool always) {
 
   // Binary XOR substitution: eliminate variables from size-2 XOR clauses.
   // Run AFTER Gauss so Gauss can first use binary XORs for constraints.
-  // Only apply on larger instances (>2500 vars) where the reduction in
-  // problem size outweighs the loss of binary XOR constraint information.
-  // Adaptive: only apply substitution after Gauss has already extracted
-  // binary constraints.  Skip on small instances where Gauss alone suffices.
-  if (opts.unionset && !xor_clauses.empty () && !unsat && max_var > 2500)
+  // Only apply on larger instances where the reduction in problem size
+  // outweighs the loss of binary XOR constraint propagation.
+  if (opts.unionset && !xor_clauses.empty () && !unsat && max_var > 2000)
     apply_binary_xor_substitution ();
 
   if (!xor_clauses.empty())
@@ -879,8 +919,10 @@ int Internal::preprocess (bool always) {
   if (!xor_clauses.empty ()) {
     rebuild_sega_data ();
     rebuild_xor_occs ();
-    if (!gf2_engine)
+    if (!gf2_engine) {
       gf2_engine = new GF2Engine (this);
+      gf2_engine->rebuild ();  // copy XOR data into safe storage
+    }
   }
   for (int i = 0; i < lim.preprocessing; i++)
     if (!preprocess_round (i))
@@ -1049,6 +1091,13 @@ void Internal::apply_binary_xor_substitution () {
   auto enc = [](int lit) { return 2 * abs (lit) + (lit < 0); };
 
   int binary_count = 0;
+
+  // Collect binary XOR from standalone XOR clauses ONLY.
+  // IMPORTANT: Do NOT include XOR blocks from mixed clauses!
+  // Mixed clauses are OR-combinations of blocks: (a XOR b) OR (c XOR d).
+  // The XOR relationship a≠b is NOT a global constraint — it only holds
+  // in the context of the disjunction.  Substituting a=¬b globally would
+  // incorrectly force all blocks to be satisfied simultaneously.
   for (auto c : xor_clauses) {
     if (!c || c->garbage) continue;
     if (c->size != 2) continue;

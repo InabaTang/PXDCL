@@ -243,21 +243,17 @@ int Internal::gauss_elimination()
         //     }
         //     printf("\n");
         // }
-        for (int row = 0 , rhs ; row < xor_kdd[ca].size(); row ++)
+        int max_extract = 3;
+        for (int row = 0, rhs; row < xor_kdd[ca].size(); row++)
         {
             vector<int> ones;
-            int64_t id;
-            for (int col = 0; col < cols - 1; col ++)
+            for (int col = 0; col < cols - 1; col++)
             {
                 if (mzd_read_bit(mat, row, col))
-                {
-                    assert(mat != nullptr);
-                    assert(row >= 0 && row < mat->nrows);
-                    assert(col >= 0 && col < mat->ncols);
-                    if (ones.size() == 2) goto NextRow;
                     ones.push_back(col + 1 + now_metis);
-                }
             }
+
+            if (ones.empty()) continue;  // zero row, skip
 
             rhs = mzd_read_bit(mat, row, cols - 1);
 
@@ -266,23 +262,21 @@ int Internal::gauss_elimination()
             {
                 original.push_back(ones[0] * (rhs ? 1 : -1));
             }
-            else if (ones.size() == 2)
+            else if (ones.size() <= max_extract)
             {
-                int p = ones[0], q = rhs ? ones[1] : -ones[1];
-                original.push_back(p);
-                original.push_back(q);
+                for (int v : ones)
+                    original.push_back(v);
+                if (!rhs)
+                    original.back() = -original.back();
                 xor_clause_flag = true;
             }
-            else assert(ones.size() <= 2);
 
-            if (ones.size() >= 1) 
+            if (!original.empty())
             {
                 add_original_lit(0);
                 original.clear();
-                //clauses[clauses.size() - 1]->pri_clause();
             }
             xor_clause_flag = false;
-            NextRow: ;
         }
         mzd_free(mat);
     }
@@ -314,21 +308,20 @@ int Internal::gauss_old_elimination()
     }
     mzd_echelonize(mat, true);
 
-    int units = 0, binaries = 0, ternaries = 0, skipped = 0;
-    for (int row = 0 , rhs ; row < rows; row ++)
+    int units = 0, binaries = 0, ternaries = 0, longer = 0, zero_rows = 0;
+    int max_extract_size = 3;   // CDCL-friendly: only short XORs propagate efficiently
+    for (int row = 0, rhs; row < rows; row++)
     {
         vector<int> ones;
-        int64_t id;
-        for (int col = 0; col < cols - 1; col ++)
+        for (int col = 0; col < cols - 1; col++)
         {
             if (mzd_read_bit(mat, row, col))
-            {
-                assert(mat != nullptr);
-                assert(row >= 0 && row < mat->nrows);
-                assert(col >= 0 && col < mat->ncols);
-                if (ones.size() == 3) goto NextRow;  // skip rows with 4+ ones
                 ones.push_back(col + 1);
-            }
+        }
+
+        if (ones.empty()) {
+            zero_rows++;
+            continue;  // linearly dependent row, skip
         }
 
         rhs = mzd_read_bit(mat, row, cols - 1);
@@ -339,42 +332,44 @@ int Internal::gauss_old_elimination()
             units++;
             original.push_back(ones[0] * (rhs ? 1 : -1));
         }
-        else if (ones.size() == 2)
+        else
         {
-            binaries++;
-            int p = ones[0], q = rhs ? ones[1] : -ones[1];
-            original.push_back(p);
-            original.push_back(q);
-            xor_clause_flag = true;
-        }
-        else if (ones.size() == 3)
-        {
-            ternaries++;
-            int p = ones[0], q = ones[1], r = rhs ? ones[2] : -ones[2];
-            original.push_back(p);
-            original.push_back(q);
-            original.push_back(r);
-            xor_clause_flag = true;
-        }
-        else if (ones.size() >= 4)
-        {
-            skipped++;
+            // Extract ALL non-zero rows as new XOR clauses, regardless of
+            // size.  Each row after echelonization is a linear combination
+            // of original XOR constraints — often shorter than the originals
+            // because variables canceled during elimination.
+            // Limit to max_extract_size (16) to avoid creating huge clauses
+            // that are useless for propagation.
+            if (ones.size() <= max_extract_size)
+            {
+                if (ones.size() == 2)
+                    binaries++;
+                else if (ones.size() == 3)
+                    ternaries++;
+                else
+                    longer++;
+
+                for (int v : ones)
+                    original.push_back(v);
+                // Encode: var1 ^ ... ^ vark = rhs.
+                // XOR clause encoding is lit1 ^ ... ^ litk = TRUE.
+                // If rhs=0: flip last literal to get =1: var1^...^(-vark)=1.
+                if (!rhs)
+                    original.back() = -original.back();
+                xor_clause_flag = true;
+            }
         }
 
-        if (ones.size() >= 1)
+        if (!original.empty())
         {
             add_original_lit(0);
             original.clear();
         }
         xor_clause_flag = false;
-        NextRow: ;
     }
-    // Keep original XOR clauses alongside Gaussian-simplified ones.
-    // The 128 binary basis clauses help propagation (size-2 checks are fast),
-    // but cannot fully replace the originals when linear combination paths
-    // are not tracked during solving.
-    printf ("c Gauss result: %d units, %d binaries, %d ternaries, %d skipped (4+), %d rows\n",
-            units, binaries, ternaries, skipped, rows);
+    printf ("c Gauss result: %d units, %d binaries, %d ternaries, "
+            "%d longer (4-%d), %d zero, %d rows\n",
+            units, binaries, ternaries, longer, max_extract_size, zero_rows, rows);
 
     mzd_free(mat);
     return true;

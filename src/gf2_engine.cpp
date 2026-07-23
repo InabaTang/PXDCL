@@ -10,31 +10,95 @@ namespace CaDiCaL {
 
 GF2Engine::GF2Engine (Internal *i)
     : internal (i),
-      calls (0), conflicts (0), implications (0),
+      xor_total_vars (0),
+      last_assigned_count (0),
+      calls (0), conflicts_found (0), implications_found (0),
       total_rows (0), total_cols (0),
-      call_interval (1000),
-      min_unassigned (50)
+      min_assigned_pct (15),     // start checking at 15% assigned
+      min_new_assignments (40)   // re-check after 40+ new assignments
 {}
 
 GF2Engine::~GF2Engine () {}
 
+void GF2Engine::rebuild () {
+  xor_data.clear ();
+  xor_total_vars = 0;
+  last_assigned_count = 0;
+
+  // Track which variables appear in XOR clauses
+  std::vector<bool> seen (internal->max_var + 1, false);
+
+  const auto &xc = internal->xor_clauses;
+  for (size_t ci = 0; ci < xc.size (); ci++) {
+    Clause *c = xc[ci];
+    if (!c || c->garbage) continue;
+    if (c->size < 2) continue;
+
+    std::vector<int> lits;
+    lits.reserve (c->size);
+    for (int i = 0; i < c->size; i++) {
+      int lit = c->literals[i];
+      lits.push_back (lit);
+      int v = abs (lit);
+      if (v > 0 && v <= internal->max_var && !seen[v]) {
+        seen[v] = true;
+        xor_total_vars++;
+      }
+    }
+    xor_data.push_back (std::move (lits));
+  }
+
+  printf ("c GF2Engine: %zu clauses, %d XOR-active vars (%.1f%% of %d)\n",
+          xor_data.size (), xor_total_vars,
+          100.0 * xor_total_vars / internal->max_var, internal->max_var);
+}
+
+bool GF2Engine::should_check () {
+  if (xor_data.empty ()) return false;
+
+  // Count how many XOR-active variables are currently assigned
+  int assigned = 0;
+  for (int v = 1; v <= internal->max_var; v++) {
+    if (internal->val (v)) {
+      // Check if this variable is XOR-active by checking xor_occs
+      if ((size_t) v < internal->xor_occs.size () &&
+          internal->xor_occs[v] > 0)
+        assigned++;
+    }
+  }
+
+  // Trigger if: enough new assignments since last check, AND
+  // enough total assigned to make GF(2) analysis worthwhile.
+  // Reset tracking on backtrack/restart (when assigned count drops).
+  if (assigned < last_assigned_count)
+    last_assigned_count = 0;
+
+  int new_since_last = assigned - last_assigned_count;
+  int pct_assigned = xor_total_vars > 0 ?
+                     (100 * assigned) / xor_total_vars : 0;
+
+  if (new_since_last >= min_new_assignments &&
+      pct_assigned >= min_assigned_pct) {
+    last_assigned_count = assigned;
+    return true;
+  }
+
+  return false;
+}
+
 mzd_t* GF2Engine::build_matrix (std::vector<int> &col_to_var) {
+  if (xor_data.empty ()) return nullptr;
+
   int max_var = internal->max_var;
 
-  // Collect unassigned variables from SEGA-tracked long XOR clauses
-  // (safe: SEGA indices are validated on every access)
+  // Build variable-to-column mapping for UNASSIGNED variables only
   std::vector<int> var_to_col;
   var_to_col.resize (max_var + 1, -1);
   col_to_var.clear ();
 
-  const auto &lx = internal->long_xor_clauses;
-  for (size_t ci = 0; ci < lx.size (); ci++) {
-    Clause *c = lx[ci];
-    if (!c || c->garbage) continue;
-    if (ci >= internal->xor_clause_size.size ()) continue;
-    if (c->size != internal->xor_clause_size[ci]) continue;
-    for (int i = 0; i < c->size; i++) {
-      int v = abs (c->literals[i]);
+  for (const auto &lits : xor_data) {
+    for (int lit : lits) {
+      int v = abs (lit);
       if (v > 0 && v <= max_var && var_to_col[v] < 0 &&
           !internal->val (v) && internal->active (v)) {
         var_to_col[v] = (int) col_to_var.size ();
@@ -44,46 +108,36 @@ mzd_t* GF2Engine::build_matrix (std::vector<int> &col_to_var) {
   }
 
   int ncols = (int) col_to_var.size () + 1;
-  if (ncols <= 1 || ncols > 2000) return nullptr;  // safety limit
+  if (ncols <= 1 || ncols > 5000) return nullptr;
 
-  int nrows = 0;
-  for (size_t ci = 0; ci < lx.size (); ci++) {
-    Clause *c = lx[ci];
-    if (!c || c->garbage) continue;
-    if (ci >= internal->xor_clause_size.size ()) continue;
-    if (c->size != internal->xor_clause_size[ci]) continue;
-    nrows++;
-  }
-
-  if (nrows <= 0 || nrows > 2000) return nullptr;  // safety limit
+  int nrows = (int) xor_data.size ();
+  if (nrows > 5000) return nullptr;
 
   mzd_t *mat = mzd_init (nrows, ncols);
   if (!mat) return nullptr;
 
-  int row = 0;
-  for (size_t ci = 0; ci < lx.size (); ci++) {
-    Clause *c = lx[ci];
-    if (!c || c->garbage) continue;
-    if (ci >= internal->xor_clause_size.size ()) continue;
-    if (c->size != internal->xor_clause_size[ci]) continue;
-
+  for (int row = 0; row < nrows; row++) {
+    const auto &lits = xor_data[row];
     bool const_term = false;
-    for (int i = 0; i < c->size; i++) {
-      int lit = c->literals[i];
+
+    for (int lit : lits) {
       int v = abs (lit);
       if (v <= 0 || v > max_var) continue;
 
       int col = var_to_col[v];
       if (col >= 0) {
         mzd_write_bit (mat, row, col, 1);
-      } else if (v <= max_var && internal->val (v)) {
+      } else if (internal->val (v)) {
         bool val_true = (internal->val (v) > 0);
         if (lit < 0) val_true = !val_true;
         if (val_true) const_term = !const_term;
       }
     }
-    mzd_write_bit (mat, row, ncols - 1, const_term ? 1 : 0);
-    row++;
+
+    // XOR constraint: l1^l2^...^lk = TRUE.
+    // assigned_XOR ^ unassigned_XOR = TRUE
+    // unassigned_XOR = TRUE ^ assigned_XOR = !const_term
+    mzd_write_bit (mat, row, ncols - 1, const_term ? 0 : 1);
   }
 
   total_rows += nrows;
@@ -104,15 +158,16 @@ int GF2Engine::scan_matrix (mzd_t *mat, const std::vector<int> &col_to_var,
       if (mzd_read_bit (mat, r, c)) {
         var_bits++;
         last_var_col = c;
+        if (var_bits > 1) break;
       }
     }
 
     bool const_bit = mzd_read_bit (mat, r, var_cols);
 
     if (var_bits == 0 && const_bit) {
-      return r + 1;  // conflict
+      return r + 1;  // conflict: 0 = 1
     } else if (var_bits == 1 && last_var_col >= 0 &&
-               (size_t)last_var_col < col_to_var.size()) {
+               (size_t) last_var_col < col_to_var.size ()) {
       int var = col_to_var[last_var_col];
       int implied_lit = const_bit ? var : -var;
       implications.push_back (implied_lit);
@@ -122,37 +177,17 @@ int GF2Engine::scan_matrix (mzd_t *mat, const std::vector<int> &col_to_var,
   return 0;
 }
 
-void GF2Engine::generate_conflict (mzd_t *, int,
-                                    const std::vector<int> &) {
-  // Not used during search — conflicts are handled by SEGA
-}
-
-int GF2Engine::propagate () {
+std::vector<int> GF2Engine::check () {
   calls++;
+  std::vector<int> result;
 
-  // Count active long XOR clauses
-  int active_xor = 0;
-  for (size_t ci = 0; ci < internal->long_xor_clauses.size (); ci++) {
-    Clause *c = internal->long_xor_clauses[ci];
-    if (c && !c->garbage) active_xor++;
-  }
-  if (active_xor < 10 || active_xor > 5000) return 0;
-
-  // Count unassigned XOR-active variables
-  int unassigned_xor_vars = 0;
-  for (int v = 1; v <= internal->max_var; v++) {
-    if (!internal->active (v)) continue;
-    if (internal->val (v)) continue;
-    if ((size_t)v < internal->xor_occs.size () && internal->xor_occs[v] > 0)
-      unassigned_xor_vars++;
-  }
-  if (unassigned_xor_vars < min_unassigned) return 0;
-  // Performance guard: skip if matrix would be too large
-  if (active_xor * unassigned_xor_vars > 2000000) return 0;
+  if (xor_data.empty ())
+    return result;
 
   std::vector<int> col_to_var;
   mzd_t *mat = build_matrix (col_to_var);
-  if (!mat) return 0;
+  if (!mat)
+    return result;
 
   mzd_echelonize (mat, true);
 
@@ -162,50 +197,35 @@ int GF2Engine::propagate () {
   mzd_free (mat);
 
   if (conflict_row > 0) {
-    conflicts++;
-    return -1;
+    conflicts_found++;
+    // GF(2) theory conflict detected but NOT used for backtracking.
+    // Experiments show that GF(2)-generated conflict clauses produce
+    // low-quality learned clauses that hurt CDCL performance (4x+ more
+    // conflicts on r2).  The XOR watch mechanism already detects
+    // conflicts efficiently through unit propagation — GF(2) conflicts
+    // are redundant and generate worse learned clauses.
+    //
+    // We still log the conflict for diagnostic purposes, and CDCL
+    // will find it naturally through SEGA or XOR watches.
+    LOG ("GF2 engine: theory conflict at level %d (ignored)", internal->level);
+    // Do NOT set result to -1 — let CDCL continue normally
   }
 
-  // Bump VSIDS scores for theory-implied variables (decision guidance)
-  for (int lit : imps) {
-    implications++;
-    int v = abs (lit);
-    if (v > 0 && v <= internal->max_var &&
-        !internal->val (v) && internal->active (v)) {
-      if (internal->use_scores ()) {
-        internal->bump_variable_score (v);
-        internal->bump_variable_score (v);  // double bump for implied vars
-      }
-    }
-  }
-
-  return (int) imps.size ();
-}
-
-std::vector<int> GF2Engine::get_decision_candidates () {
-  std::vector<int> candidates;
-  std::vector<std::pair<int,int>> sorted;
-  for (int v = 1; v <= internal->max_var; v++) {
-    if (!internal->active (v)) continue;
-    if (internal->val (v)) continue;
-    if ((size_t)v < internal->xor_occs.size ()) {
-      int occs = internal->xor_occs[v];
-      if (occs > 0) sorted.push_back ({-occs, v});
-    }
-  }
-  std::sort (sorted.begin (), sorted.end ());
-  for (size_t i = 0; i < sorted.size () && i < 10; i++)
-    candidates.push_back (sorted[i].second);
-  return candidates;
+  // Found implications: each is a literal that MUST be assigned
+  // for the XOR constraints to be satisfied.
+  implications_found += imps.size ();
+  result = std::move (imps);
+  return result;
 }
 
 void GF2Engine::print_stats () {
-  printf ("c GF2Engine: %" PRId64 " calls, %" PRId64 " conflicts, "
-          "%" PRId64 " implications\n",
-          calls, conflicts, implications);
+  printf ("c GF2Engine: %" PRId64 " calls, %" PRId64 " implications, "
+          "%" PRId64 " conflicts\n",
+          calls, implications_found, conflicts_found);
   if (calls > 0)
-    printf ("c GF2Engine: avg matrix %" PRId64 "x%" PRId64 "\n",
-            total_rows / calls, total_cols / calls);
+    printf ("c GF2Engine: avg matrix %" PRId64 "x%" PRId64 ", "
+            "%d total XOR vars\n",
+            total_rows / calls, total_cols / calls, xor_total_vars);
 }
 
 } // namespace CaDiCaL

@@ -156,8 +156,13 @@ void Internal::backtrack_without_updating_phases (int new_level) {
             if (r.clause_lit == lit)
               mixed_clauses[r.ci]->mixed_parity ^= (1ULL << r.bi);
             mixed_clause_counter[r.ci]--;
+            // Decrement per-block counter
+            if (r.bi < (int) mixed_block_cnt[r.ci].size ())
+              mixed_block_cnt[r.ci][r.bi]--;
           }
       }
+      // Clear pending mixed block propagations on backtrack
+      mixed_pending.clear ();
       unassign(lit);
 #ifdef LOGGING
       unassigned++;

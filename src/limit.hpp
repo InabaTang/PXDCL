@@ -32,6 +32,7 @@ struct Limit {
                              // for incremental clauses
   int64_t random_decision;   // randomized decision limit for conflicts
   int64_t xor_boost;         // conflict limit for next XOR variable boost
+  int64_t gf2_check;         // conflict limit for next GF(2) theory check
 
   int keptsize;           // maximum kept size in 'reduce'
   int keptglue;           // maximum kept glue in 'reduce'

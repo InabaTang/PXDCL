@@ -4,49 +4,111 @@ namespace CaDiCaL {
 
 bool Internal::segaing()
 {
-    return !xor_full_clause.empty();
+    if (!xor_full_clause.empty())
+      return true;
+
+    // Also check for XOR unit propagation: clauses where all but one
+    // literal is assigned.  The remaining literal is forced by XOR parity.
+    for (size_t ci = 0; ci < long_xor_clauses.size(); ci++) {
+        Clause *c = long_xor_clauses[ci];
+        if (!c || c->garbage) continue;
+        if (xor_clause_counter[ci] == xor_clause_size[ci] - 1)
+          return true;
+    }
+    return false;
 }
 
 // Process fully-assigned long XOR clauses (size > 5).
 // Recomputes XOR parity from scratch for correctness — the incrementally-
 // tracked xor_clause_parity may drift due to complex backtrack/reassign
 // patterns.  The tracking is still maintained for bump_near_full_xor().
+//
+// Also handles XOR unit propagation: when all but one literal is assigned,
+// the remaining literal is forced by the XOR parity constraint.
 void Internal::sega()
 {
-    vector<int> to_process = xor_full_clause;
-    xor_full_clause.clear();
+    // 1. Check fully-assigned clauses for conflicts (original behavior)
+    if (!xor_full_clause.empty())
+    {
+        vector<int> to_process = xor_full_clause;
+        xor_full_clause.clear();
 
-    for (int ci : to_process) {
-        if (ci < 0 || ci >= (int)long_xor_clauses.size()) continue;
+        for (int ci : to_process) {
+            if (ci < 0 || ci >= (int)long_xor_clauses.size()) continue;
+            Clause *c = long_xor_clauses[ci];
+            if (c == nullptr) continue;  // clause was deleted by GC
+            if (c->garbage || c->size == 0) continue;
+            if (c->size != xor_clause_size[ci]) continue;
+
+            // Verify ALL literals are actually assigned (counter may be stale)
+            bool all_assigned = true;
+            bool xor_parity = false;
+            for (int i = 0; i < c->size; i++) {
+                int lit = c->literals[i];
+                signed char v = val(lit);
+                if (!v) { all_assigned = false; break; }
+                if (v > 0)
+                    xor_parity = !xor_parity;
+            }
+            if (!all_assigned) continue;  // counter was wrong, skip
+
+            if (xor_parity)
+                continue;  // satisfied
+
+            // XOR violated: all literals assigned, parity is even (should be 1).
+            conflict = c;
+            return;
+        }
+    }
+
+    // 2. XOR unit propagation: all but one literal assigned → force the last.
+    //    This mimics xorcle's GF(2) propagation: when k-1 variables in a
+    //    linear equation are known, the kth is uniquely determined.
+    for (size_t ci = 0; ci < long_xor_clauses.size(); ci++) {
         Clause *c = long_xor_clauses[ci];
-        if (c == nullptr) continue;  // clause was deleted by GC
-        if (c->garbage || c->size == 0) continue;
-        if (c->size != xor_clause_size[ci]) continue;
+        if (!c || c->garbage) continue;
+        if (xor_clause_counter[ci] != xor_clause_size[ci] - 1) continue;
 
-        // Verify ALL literals are actually assigned (counter may be stale)
-        bool all_assigned = true;
+        // Find the single unassigned literal and recompute parity.
+        // We recompute parity from scratch (rather than using the tracked
+        // xor_clause_parity) to avoid stale-tracking issues.
+        int unassigned = 0;
         bool xor_parity = false;
         for (int i = 0; i < c->size; i++) {
             int lit = c->literals[i];
             signed char v = val(lit);
-            if (!v) { all_assigned = false; break; }
-            if (v > 0)
+            if (!v) {
+                if (unassigned) { unassigned = 0; break; } // >1 unassigned
+                unassigned = lit;
+            } else if (v > 0) {
                 xor_parity = !xor_parity;
+            }
         }
-        if (!all_assigned) continue;  // counter was wrong, skip
+        if (!unassigned) continue;  // counter was stale
 
-        if (xor_parity)
-            continue;  // satisfied
+        // XOR constraint: l1 ^ l2 ^ ... ^ ln = 1 (TRUE).
+        // Let p = XOR of (assigned literals > 0).
+        // Then p ^ val(ln) = 1  =>  val(ln) = p ^ 1 = !p.
+        //  - If p == 0 (even): the unassigned literal must be TRUE  → force lit
+        //  - If p == 1 (odd):  the unassigned literal must be FALSE → force -lit
+        int forced = (xor_parity == 0) ? unassigned : -unassigned;
 
-        // XOR violated: all literals assigned false (even parity).
-        conflict = c;
-        break;
+        LOG ("XOR unit: clause[%zu] cnt=%d forcing %d (parity=%d)",
+             ci, xor_clause_counter[ci], forced, (int)xor_parity);
+
+        // Assign the forced literal with the XOR clause as reason.
+        // The next CDCL loop iteration will propagate through this assignment.
+        search_assign_driving (forced, c);
+        return;  // one propagation per sega() call
     }
 }
 
 // Boost decision scores for unassigned variables in near-full long XOR
 // clauses.  When a clause is >= 60% assigned, its remaining unassigned
 // variables get score bumps so the solver focuses on completing XOR constraints.
+// Variables in clauses that are 80%+ assigned (cnt >= sz-1 or cnt >= sz-2)
+// get extra-strong bumps since they are on the verge of triggering SEGA
+// conflict detection or unit propagation.
 void Internal::bump_near_full_xor()
 {
     for (size_t ci = 0; ci < long_xor_clauses.size(); ci++) {
@@ -56,12 +118,20 @@ void Internal::bump_near_full_xor()
         int sz = xor_clause_size[ci];
         if (cnt * 5 < sz * 3) continue;  // < 60% assigned
         if (cnt == sz) continue;          // already fully assigned
+
+        // Extra-strong bump for very-near-full clauses (1-2 unassigned):
+        // these are close to triggering conflict/propagation.
+        int bump_count = 1;
+        if (cnt >= sz - 1) bump_count = 3;       // 1 unassigned: critical
+        else if (cnt >= sz - 2) bump_count = 2;   // 2 unassigned: very near
+
         for (int i = 0; i < sz; i++) {
             int lit = c->literals[i];
             if (abs(lit) > max_var || abs(lit) == 0) continue;
             if (!active(lit)) continue;
             if (!val(lit))
-                bump_variable_score(lit);
+                for (int k = 0; k < bump_count; k++)
+                    bump_variable_score(lit);
         }
     }
 }
