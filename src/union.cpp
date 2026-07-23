@@ -276,14 +276,15 @@ void Internal::AddXorGate(Clause *xorcon) {
         int b = xorcon->literals[1];
         int c = xorcon->literals[2];
 
-        AddEqvImpl(a, -b, c);
-        AddEqvImpl(-a, b, c);
-
-        AddEqvImpl(b, -a, c);
-        AddEqvImpl(-b, a, c);
-
-        AddEqvImpl(c, -a, b);
-        AddEqvImpl(-c, a, b);
+        // XOR constraint: a ⊕ b ⊕ c = 1
+        // When a=TRUE:  b⊕c=0 → b=c  → equivalence b↔c
+        // When a=FALSE: b⊕c=1 → b≠c  → equivalence b↔¬c
+        AddEqvImpl(a,  b,  c);   // a=TRUE  → b↔c
+        AddEqvImpl(-a, b, -c);   // a=FALSE → b↔¬c
+        AddEqvImpl(b,  a,  c);   // b=TRUE  → a↔c
+        AddEqvImpl(-b, a, -c);   // b=FALSE → a↔¬c
+        AddEqvImpl(c,  a,  b);   // c=TRUE  → a↔b
+        AddEqvImpl(-c, a, -b);   // c=FALSE → a↔¬b
     }
 }
 
