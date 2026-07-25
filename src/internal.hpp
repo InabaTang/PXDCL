@@ -374,6 +374,7 @@ struct Internal {
   // for xor gauss
   int xor_clause_number; // not include gauss clause
   vector<Clause *> xor_clauses;
+  int xor_assigned_count;
 
   // for mixed XOR+OR clauses
   struct MixedVarRef { int ci; int bi; int clause_lit; };
@@ -962,6 +963,8 @@ struct Internal {
   void bump_also_reason_literals (int lit, int depth_limit,
                                   size_t size_limit);
   void bump_also_all_reason_literals ();
+  bool try_xor_uip_clause (int uip, const std::vector<int> &baseline_clause,
+                           std::vector<int> &out_clause);
   void analyze_literal (int lit, int &open, int &resolvent_size,
                         int &antecedent_size);
   void analyze_reason (int lit, Clause *, int &open, int &resolvent_size,
@@ -1989,6 +1992,8 @@ struct Internal {
   UnionSet *_xorUnion;
   Eqvmap *_eqvMaps;
   std::pair<int,int> *_eqvRelations;
+  std::unordered_set<uint64_t> _eqv_relation_hash;
+  std::vector<uint64_t> _eqv_relation_keys;
   vector<int> _xorConflict;
   Clause *_eqvconflict;
   int *_lv2Trail;

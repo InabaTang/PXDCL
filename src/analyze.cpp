@@ -359,6 +359,90 @@ inline void Internal::analyze_reason (int lit, Clause *reason, int &open,
   }
   else if (reason->mixed_flag)
   {
+    // Phase-1 mixed candidate construction (algorithm-3 attempt):
+    // for the initial mixed conflict expansion (lit == 0), project the
+    // conflict to violated blocks only and cap candidate growth.  If any
+    // guard fails we fall back to the existing stable XOR-style path.
+    const int mixedcand_mode = opts.mixedcand;
+    size_t mixed_candidate_limit = 0;
+    int mixed_reason_size_limit = 0;
+    int mixed_block_limit = 0;
+    if (mixedcand_mode == 1) {
+      mixed_candidate_limit = 192;
+      mixed_reason_size_limit = 64;
+      mixed_block_limit = 8;
+    } else if (mixedcand_mode == 2) {
+      mixed_candidate_limit = 384;
+      mixed_reason_size_limit = 128;
+      mixed_block_limit = 16;
+    }
+
+    if (!lit && mixed_candidate_limit > 0 && reason->mixed_num_blocks > 0 &&
+        reason->size <= mixed_reason_size_limit &&
+        reason->mixed_num_blocks <= mixed_block_limit) {
+      const int *offsets = reason->block_offsets ();
+      const int nb = reason->mixed_num_blocks;
+
+      bool complete = true;
+      std::vector<int> candidate;
+      candidate.reserve (reason->size);
+
+      for (int bi = 0; bi < nb; bi++) {
+        const int bs = (bi == 0) ? 0 : offsets[bi - 1];
+        const int be = offsets[bi];
+        if (bs < 0 || be < bs || be > reason->size) {
+          complete = false;
+          break;
+        }
+
+        bool parity = false;
+        for (int j = bs; j < be; j++) {
+          const int orig = reason->literals[j];
+          const signed char v = val (orig);
+          if (!v) {
+            complete = false;
+            break;
+          }
+          if (v > 0)
+            parity = !parity;
+        }
+        if (!complete)
+          break;
+
+        if (parity)
+          continue; // satisfied block, irrelevant for violated-block reason
+
+        for (int j = bs; j < be; j++) {
+          int other = reason->literals[j];
+          if (val (other) > 0)
+            other = -other; // normalize to currently false literal
+          candidate.push_back (other);
+        }
+        if (candidate.size () > mixed_candidate_limit) {
+          complete = false;
+          break;
+        }
+      }
+
+      if (complete && !candidate.empty ()) {
+        std::sort (candidate.begin (), candidate.end (),
+                   [] (int a, int b) {
+                     return abs (a) < abs (b)
+                            || (abs (a) == abs (b) && a < b);
+                   });
+        int last = 0;
+        for (const auto &other : candidate) {
+          if (last && other == last)
+            continue;
+          if (flags (other).seen)
+            continue;
+          last = other;
+          analyze_literal (other, open, resolvent_size, antecedent_size);
+        }
+        return;
+      }
+    }
+
     // XOR-style flipping for mixed clauses (same logic as XOR).
     // Convert all TRUE literals to FALSE using the 'left' flag to track
     // parity.  The flipped clause produces an all-FALSE representation
@@ -410,6 +494,186 @@ inline void Internal::analyze_reason (int lit, Clause *reason, int &open,
         analyze_literal (other, open, resolvent_size, antecedent_size);
   }
   //printf("why? open is %d\n",open);
+}
+
+/*------------------------------------------------------------------------*/
+
+// Conservative XOR-UIP candidate generation.
+//
+// This routine never mutates solver state and only builds a candidate OR
+// clause from a pure XOR-reason closure around the current UIP literal.
+// If any guard fails, it returns false and the caller must keep baseline.
+
+bool Internal::try_xor_uip_clause (int uip, const std::vector<int> &baseline,
+                                   std::vector<int> &out) {
+  out.clear ();
+  if (!opts.xoruip)
+    return false;
+  // Replacing the baseline 1-UIP clause requires rebuilding the proof chain.
+  // Until that is implemented, keep proof/check modes on the baseline path.
+  if (proof)
+    return false;
+  if (!uip)
+    return false;
+  if (baseline.size () < 2)
+    return false;
+  if (var (uip).level != level)
+    return false;
+
+  // Gather XOR-reason cone from current-level literals in baseline.
+  std::vector<int> stack;
+  std::vector<int> topo;
+  std::unordered_set<int> in_cone;
+  stack.reserve (baseline.size () + 16);
+  topo.reserve (baseline.size () + 32);
+  in_cone.reserve (baseline.size () + 64);
+
+  for (const int lit : baseline) {
+    if (lit == -uip)
+      continue;
+    if (var (lit).level != level)
+      continue;
+    stack.push_back (-lit);
+  }
+
+  const size_t xor_depth_cap = 96;
+  const size_t xor_nodes_cap = 512;
+  size_t depth = 0;
+
+  while (!stack.empty ()) {
+    if (++depth > xor_depth_cap)
+      return false;
+    const int lit = stack.back ();
+    stack.pop_back ();
+    if (in_cone.find (lit) != in_cone.end ())
+      continue;
+    in_cone.insert (lit);
+    topo.push_back (lit);
+    if (topo.size () > xor_nodes_cap)
+      return false;
+
+    Var &v = var (lit);
+    Clause *r = v.reason;
+    if (!r || r == external_reason)
+      continue;
+    if (!r->xor_flag || r->mixed_flag)
+      return false; // strict: only pure XOR reasons in closure
+
+    for (const int other : *r) {
+      if (abs (other) == abs (lit))
+        continue;
+      if (val (other) >= 0)
+        return false;
+      if (var (other).level == level &&
+          in_cone.find (other) == in_cone.end ())
+        stack.push_back (other);
+    }
+  }
+
+  if (topo.empty ())
+    return false;
+
+  // XOR-eliminate internal current-level literals from baseline.
+  std::vector<int> parity_clause = baseline;
+  for (const int lit : topo) {
+    Var &v = var (lit);
+    Clause *r = v.reason;
+    if (!r || r == external_reason)
+      continue;
+
+    std::vector<int> row;
+    row.reserve (r->size);
+    bool left = false;
+    for (const int other : *r) {
+      const int vv = val (other);
+      if (vv > 0) {
+        row.push_back (-other);
+        left ^= true;
+      } else if (vv < 0) {
+        row.push_back (other);
+      } else {
+        return false;
+      }
+    }
+    if (left) {
+      bool fixed = false;
+      for (auto &x : row) {
+        if (abs (x) == abs (lit)) {
+          x = -x;
+          fixed = true;
+          left ^= true;
+          break;
+        }
+      }
+      if (!fixed || left)
+        return false;
+    }
+
+    parity_clause.push_back (-lit);
+    for (const int x : row)
+      if (abs (x) != abs (lit))
+        parity_clause.push_back (x);
+  }
+
+  // Reduce mod-2 multiplicity.
+  std::sort (parity_clause.begin (), parity_clause.end (),
+             [] (int a, int b) {
+               return abs (a) < abs (b)
+                      || (abs (a) == abs (b) && a < b);
+             });
+
+  out.reserve (parity_clause.size ());
+  for (size_t i = 0; i < parity_clause.size ();) {
+    const int lit = parity_clause[i];
+    size_t j = i + 1;
+    while (j < parity_clause.size () && parity_clause[j] == lit)
+      j++;
+    if (((j - i) & 1) == 1)
+      out.push_back (lit);
+    i = j;
+  }
+
+  if (out.empty ())
+    return false;
+
+  // Tautology check and normalization.
+  std::sort (out.begin (), out.end (),
+             [] (int a, int b) {
+               return abs (a) < abs (b)
+                      || (abs (a) == abs (b) && a < b);
+             });
+  for (size_t i = 1; i < out.size (); i++) {
+    if (out[i] == out[i - 1]) {
+      out.erase (out.begin () + i);
+      i--;
+      continue;
+    }
+    if (out[i] == -out[i - 1]) {
+      out.clear ();
+      return false;
+    }
+  }
+
+  // Must contain -uip exactly once and no other current-level literals.
+  int uip_count = 0;
+  for (const int lit : out) {
+    if (lit == -uip)
+      uip_count++;
+    else if (var (lit).level == level)
+      return false;
+    if (val (lit) >= 0)
+      return false; // learned clause should be asserting now
+  }
+  if (uip_count != 1)
+    return false;
+
+  // Keep memory/runtime bounded and avoid growth regressions.
+  if (out.size () > baseline.size () + 8)
+    return false;
+  if (out.size () > 256)
+    return false;
+
+  return true;
 }
 
 /*------------------------------------------------------------------------*/
@@ -1446,9 +1710,21 @@ void Internal::analyze () { //Find : analyze
     }
 
     // printf("analyze finish\n");
-    LOG ("first UIP %d", uip);
-    // printf("uip is %d\n",uip);
-    clause.push_back (-uip);
+  LOG ("first UIP %d", uip);
+  // printf("uip is %d\n",uip);
+  clause.push_back (-uip);
+
+    // Optional XOR-aware UIP replacement:
+    // only on pure XOR reason cones, with strict structural checks.
+    if (opts.xoruip && clause.size () > 1) {
+      std::vector<int> baseline_clause = clause;
+      std::vector<int> xor_uip_clause;
+      if (try_xor_uip_clause (uip, baseline_clause, xor_uip_clause)) {
+        // Additional safety gate: never worsen clause size in this mode.
+        if (xor_uip_clause.size () <= baseline_clause.size ())
+          clause.swap (xor_uip_clause);
+      }
+    }
   }
 
   // Update glue and learned (1st UIP literals) statistics.

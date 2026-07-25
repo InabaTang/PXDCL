@@ -157,6 +157,7 @@ OPTION( luckylate,         1,  0,  1,0,0,1, "lucky phases after preprocessing") 
 OPTION( minimize,          1,  0,  1,0,0,1, "minimize learned clauses") \
 OPTION( minimizedepth,   1e3,  0,1e3,0,0,1, "minimization depth") \
 OPTION( minimizeticks,     1,  0,  1,0,0,1, "increment ticks in minimization") \
+OPTION( mixedcand,         1,  0,  2,0,0,1, "mixed analyze candidate (0=off,1=conservative,2=aggressive)") \
 OPTION( otfs,              1,  0,  1,0,0,1, "on-the-fly self subsumption") \
 OPTION( phase,             1,  0,  1,0,0,1, "initial phase") \
 OPTION( preprocessinit,  2e6,  0,2e9,2,0,1, "initial preprocessing base limit" ) \
@@ -281,6 +282,7 @@ OPTION( walkmineff,        0,  0,1e7,1,0,1, "minimum efficiency") \
 OPTION( walknonstable,     1,  0,  1,0,0,1, "walk in non-stabilizing phase") \
 OPTION( walkredundant,     0,  0,  1,0,0,1, "walk redundant clauses too") \
 OPTION( warmup,            1,  0,  1,0,0,1, "warmup before walk using propagation") \
+OPTION( xoruip,            0,  0,  1,0,0,1, "try XOR-aware UIP replacement on pure XOR reason graphs") \
 
 // Note, keep an empty line right before this line because of the last '\'!
 // Also keep those single spaces after 'OPTION(' for proper sorting.

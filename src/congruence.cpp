@@ -7756,6 +7756,11 @@ bool Internal::extract_gates (bool remove_units_before_run) {
     return false;
   if (!opts.congruence)
     return false;
+  // Congruence closure is currently OR-clause oriented in this branch.
+  // Running it on formulas with native XOR/mixed constraints can introduce
+  // unsound transformations and false UNSAT results.
+  if (!xor_clauses.empty () || !mixed_clauses.empty ())
+    return false;
   if (level)
     backtrack ();
   if (!propagate ()) {

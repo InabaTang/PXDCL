@@ -454,6 +454,11 @@ int Internal::lucky_phases () {
   // External propagator assumes a CDCL loop, so lucky is not tried here.
   if (!constraint.empty () || external_prop)
     return 0;
+  // Lucky SAT checks only reason over OR clauses.  On formulas with XOR or
+  // mixed clauses they can incorrectly accept a full assignment that violates
+  // parity constraints, which is only caught by the later verifier.
+  if (!xor_clauses.empty () || !mixed_clauses.empty ())
+    return 0;
   if (!propagate ()) {
     learn_empty_clause ();
     return 20;

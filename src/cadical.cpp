@@ -910,6 +910,7 @@ int App::main (int argc, char **argv) {
   // the final model.  Uses internal->val() for parity checks because
   // solver->val() returns the TRUE PHASE (always positive).
   if (res == 10) {
+    printf ("c -- Model verification ---------------------------------------------\n");
     auto *internal = solver->internal;
     // Expand model: eliminated variables via binary XOR substitution.
     // Iterate to resolve chains (v1→±v2→±v3...).
@@ -1001,19 +1002,26 @@ int App::main (int argc, char **argv) {
       }
     }
 
-    if (violations == 0)
+    if (violations == 0) {
+      printf ("c Model verification: PASS (%d/%" PRIu64 " clauses satisfied)\n",
+              verified, expected);
       solver->message ("Solution VERIFIED: %d/%" PRIu64 " clauses all satisfied",
                        verified, expected);
-    else {
+    } else {
+      printf ("c Model verification: FAIL (%d violations; checked %d/%" PRIu64 ")\n",
+              violations, verified, expected);
+      printf ("c   OR: %d, XOR: %d, Mixed: %d violated\n",
+              or_violations, xor_violations, mixed_violations);
       solver->message ("Solution INVALID: %d/%d clauses violated (expected %" PRIu64 ")",
                        violations, verified, expected);
-      solver->message ("  OR: %d, XOR: %d, Mixed: %d violated",
-                       or_violations, xor_violations, mixed_violations);
       // Override SAT result: invalid solution means the solver produced
       // a witness that does not actually satisfy all constraints.
       // This can happen when XOR/mixed clause handling has bugs.
       res = 0;  // override SAT → INVALID (unknown)
     }
+  } else if (res == 20) {
+    printf ("c -- Model verification ---------------------------------------------\n");
+    printf ("c Model verification: skipped (UNSAT has no witness model)\n");
   }
 
   if (res == 10) {
