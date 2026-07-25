@@ -22,6 +22,7 @@
 //      GF(2) call re-evaluates from the new (smaller) assignment.
 
 #include <cstdint>
+#include <cstddef>
 #include <vector>
 
 struct mzd_t;
@@ -33,10 +34,28 @@ struct Clause;
 
 class GF2Engine {
 private:
+  struct SparseRow {
+    std::vector<int> vars; // sorted, unique (GF(2) parity)
+    bool rhs;
+  };
+  struct TrailOp {
+    int var;
+    bool value_true;
+    std::vector<int> affected_rows;
+  };
+
   Internal *internal;
 
   // Safe, persistent copy of XOR clause data.
   std::vector<std::vector<int>> xor_data;
+  // Structural sparse basis (assignment-independent).
+  std::vector<SparseRow> structural_basis;
+  bool structural_inconsistent;
+  // Incremental projection under current trail assignment.
+  std::vector<SparseRow> projected_rows;
+  std::vector<std::vector<int>> var_to_rows;
+  std::vector<TrailOp> trail_ops;
+  size_t synced_trail_size;
 
   // Total XOR-active variables (computed at rebuild time)
   int xor_total_vars;
@@ -50,10 +69,30 @@ private:
   int64_t implications_found;
   int64_t total_rows;
   int64_t total_cols;
+  int64_t sparse_calls;
+  int64_t dense_calls;
+  int64_t sparse_conflicts;
+  int64_t dense_conflicts;
+  int64_t sparse_implications;
+  int64_t dense_implications;
 
   // Configuration
   int min_assigned_pct;      // Minimum % of XOR vars assigned to trigger
-  int min_new_assignments;    // Minimum new assignments since last check
+  int min_new_assignments;    // Minimum new assignments since last timed check
+  int early_assigned_pct;     // Stricter early-trigger assignment %
+  int early_new_assignments;  // Stricter early-trigger assignment delta
+  int sparse_assigned_pct;    // Prefer sparse RowSpace backend above this %
+
+  bool should_check_with_thresholds (int req_pct, int req_new_assignments);
+  bool should_use_sparse_backend () const;
+  static void xor_sorted_vectors (const std::vector<int> &a,
+                                  const std::vector<int> &b,
+                                  std::vector<int> &out);
+  static void normalize_row_vars (std::vector<int> &vars);
+  void rebuild_structural_basis ();
+  void rebuild_incremental_projection ();
+  void sync_projected_rows_to_trail ();
+  int check_sparse (std::vector<int> &implications);
 
   // Build an m4ri matrix from safe xor_data + current assignments.
   // Only includes columns for UNASSIGNED variables.
@@ -73,6 +112,12 @@ public:
   // Check if the engine should run given the current assignment state.
   // Returns true if enough XOR variables are assigned to warrant analysis.
   bool should_check ();
+
+  // Optional early trigger before the timed conflict window.
+  bool should_check_early ();
+
+  // Adaptive scheduling of next timed check interval (in conflicts).
+  int recommended_interval (int implied, bool early_trigger) const;
 
   // Run theory propagation.  Returns a vector of implied literals.
   // The caller MUST assign these via search_assign_driving(), using

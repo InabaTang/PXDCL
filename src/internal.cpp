@@ -26,6 +26,7 @@ Internal::Internal ()
       marked_failed (true), sweep_incomplete (false),
       randomized_deciding (false), citten (0), num_assigned (0), proof (0),
       opts (this), xor_conflict_ema (0), xor_clause_count (0),
+      xor_assigned_count (0),
       xor_boost_interval (100), xor_phase_enabled (0),
       gf2_engine (0), xor_kdd (500),
       // Initialize mixed clause parsing state
@@ -357,8 +358,19 @@ int Internal::cdcl_loop_with_inprocessing () {
       // GF(2) theory engine: periodic XOR subsystem analysis.
       // When implications are found → bump VSIDS (soft guidance).
       // When conflict is found → generate conflict clause & backtrack.
-      if (gf2_engine && stats.conflicts >= lim.gf2_check) {
+      const bool gf2_timed_due = (stats.conflicts >= lim.gf2_check);
+      // Guard early trigger to a narrow pre-window to avoid overly frequent
+      // matrix builds on assignment-heavy instances.
+      const int64_t gf2_to_timed = lim.gf2_check - stats.conflicts;
+      const bool gf2_early_window = (gf2_to_timed > 0 && gf2_to_timed <= 512);
+      const bool gf2_early_due = (!gf2_timed_due && gf2_engine &&
+                                  gf2_early_window &&
+                                  gf2_engine->should_check_early ());
+      if (gf2_engine && ((gf2_timed_due && gf2_engine->should_check ()) ||
+                         gf2_early_due)) {
         std::vector<int> imps = gf2_engine->check ();
+        const int next_interval =
+            gf2_engine->recommended_interval (imps.size (), gf2_early_due);
         if (!imps.empty () && imps[0] == -1) {
           // GF(2) theory conflict: GF2Engine set conflict clause from
           // current decisions.  Skip decide() and let the next loop
@@ -366,7 +378,7 @@ int Internal::cdcl_loop_with_inprocessing () {
           // analyze_wrapper() to learn a clause and backtrack.
           printf ("c GF2: conflict at %" PRId64 " confl (level %d)\n",
                   stats.conflicts, level);
-          lim.gf2_check = stats.conflicts + 4096;
+          lim.gf2_check = stats.conflicts + next_interval;
           conflict = 0;  // reset? No — GF2Engine already set it.
           // Actually, the GF2Engine set internal->conflict via
           // new_driving_clause.  We need to continue to let CDCL
@@ -390,7 +402,7 @@ int Internal::cdcl_loop_with_inprocessing () {
             printf ("c GF2: #%zu imps at %" PRId64 " confl (msg #%d)\n",
                     imps.size (), stats.conflicts, gf2_msg_count);
         }
-        lim.gf2_check = stats.conflicts + 4096;
+        lim.gf2_check = stats.conflicts + next_interval;
       }
       if (!conflict)  // skip decide if conflict was set by GF2
         res = decide ();
@@ -919,6 +931,10 @@ int Internal::preprocess (bool always) {
   if (!xor_clauses.empty ()) {
     rebuild_sega_data ();
     rebuild_xor_occs ();
+    xor_assigned_count = 0;
+    for (int v = 1; v <= max_var; v++)
+      if (val (v) && (size_t) v < xor_occs.size () && xor_occs[v] > 0)
+        xor_assigned_count++;
     if (!gf2_engine) {
       gf2_engine = new GF2Engine (this);
       gf2_engine->rebuild ();  // copy XOR data into safe storage
