@@ -23,6 +23,9 @@ void UnionSet::AllocateMemory(int max_var)
     _treeRank   = new unsigned[(_maxvar + 5) << 1];
     _litDepth   = new unsigned[(_maxvar + 5) << 1];
     _rankPlus   = new bool    [(_maxvar + 5) << 1];
+    _reasonStamp = new unsigned[(_maxvar + 5) << 1];
+    _reasonPos = new int [(_maxvar + 5) << 1];
+    _reasonStampTick = 1;
 
     _lv2Trail   = new unsigned [(_maxvar + 5) << 1];
 
@@ -48,6 +51,8 @@ void UnionSet::AllocateMemory(int max_var)
         _queryRoot[lit] = _father[lit] = lit;
         _queryRoot[flit] = _father[flit] = flit;
         _litStamp[lit] = _litStamp[flit] = 0;
+        _reasonStamp[lit] = _reasonStamp[flit] = 0;
+        _reasonPos[lit] = _reasonPos[flit] = -1;
 
         _treeRank[lit] = _treeRank[flit] = 1;
         _litDepth[lit] = _litDepth[flit] = 0;
@@ -152,18 +157,43 @@ void UnionSet::Eraselit(int id , vector<int> &big)
 
 void UnionSet::AddVarReason(int lvar) 
 {
-    vector<int> reason = _varReasons[lvar];
-    //cout << "Before AddVarReason: " << lvar << " with "; Display(_bigEqvReason); 
-    int lit;
-    for (unsigned i = 0, size = reason.size(); i < size; i++) {
-        lit = reason[i];
-        assert(lit);
-        //cout << "AddVarReason lit : " << lit << std::endl;
-        int k = Havelit(lit, _bigEqvReason);
-        if (k != -1) Eraselit(k , _bigEqvReason);
-        else _bigEqvReason.push_back(lit);
+    const vector<int> &reason = _varReasons[lvar];
+    if (reason.empty ()) return;
+
+    // Build membership of current reason set in O(|_bigEqvReason|).
+    if (++_reasonStampTick == 0) {
+        memset (_reasonStamp, 0, sizeof(unsigned) * (((_maxvar + 5) << 1)));
+        _reasonStampTick = 1;
     }
-    //cout << "AddVarReason Done  " << lvar << " with "; Display(_bigEqvReason);
+    for (size_t i = 0; i < _bigEqvReason.size (); i++) {
+        const int lit = _bigEqvReason[i];
+        const int idx = inter->vlit (lit);
+        _reasonStamp[idx] = _reasonStampTick;
+        _reasonPos[idx] = (int) i;
+    }
+
+    for (int lit : reason) {
+        assert (lit);
+        const int idx = inter->vlit(lit);
+        if (_reasonStamp[idx] == _reasonStampTick) {
+            // Symmetric-difference cancellation in O(1).
+            const int pos = _reasonPos[idx];
+            assert (pos >= 0 && (size_t) pos < _bigEqvReason.size ());
+            const int moved_lit = _bigEqvReason.back ();
+            _bigEqvReason[pos] = moved_lit;
+            _bigEqvReason.pop_back ();
+            if ((size_t) pos < _bigEqvReason.size ()) {
+                const int moved_idx = inter->vlit (moved_lit);
+                _reasonPos[moved_idx] = pos;
+            }
+            _reasonStamp[idx] = 0;
+            _reasonPos[idx] = -1;
+        } else {
+            _reasonPos[idx] = (int) _bigEqvReason.size ();
+            _bigEqvReason.push_back (lit);
+            _reasonStamp[idx] = _reasonStampTick;
+        }
+    }
 }
 
 int UnionSet::Find(int lit) {
@@ -319,10 +349,29 @@ void Internal::AddEqvImpl(int a , int b , int c)
 
 void Internal::AddEqvRelation(int lit1 , int lit2 , int reason)
 {
+    if (lit1 == lit2) return;
+
+    // Canonicalize key so (a,b)==(b,a) and (a,b)==(-a,-b).
+    int a = lit1, b = lit2;
+    if (a > b) std::swap(a, b);
+    int na = -a, nb = -b;
+    if (na > nb) std::swap(na, nb);
+    if (na < a || (na == a && nb < b)) {
+        a = na;
+        b = nb;
+    }
+    const uint64_t key =
+        (uint64_t)(uint32_t)a << 32 | (uint32_t)b;
+
+    // Skip duplicate queued relations in current search state.
+    if (_eqv_relation_hash.find(key) != _eqv_relation_hash.end()) return;
+
     if (_xorUnion->JudgeEqv(lit1, lit2)) return ;
 
     _eqvRelations[_eqvRelationSize] = make_pair(lit1, lit2);
     _eqvReasons[_eqvRelationSize] = reason;
+    _eqv_relation_keys.push_back(key);
+    _eqv_relation_hash.insert(key);
     _eqvRelationSize ++;
 }
 
@@ -330,17 +379,21 @@ vector<int> Internal::EqvPropagation(unsigned start)
 {
     vector<int> ret;
     ret.clear();
-    for ( ; start < _eqvRelationSize; start ++)
-    {
-        std::pair<int,int> &relation = _eqvRelations[start];
+    // Propagate equivalence relations to a fixed point for this batch:
+    // newly added relations can imply further merges in the same call.
+    while (start < (unsigned) _eqvRelationSize) {
+        const unsigned end = _eqvRelationSize;
+        for (; start < end; start++) {
+            std::pair<int, int> &relation = _eqvRelations[start];
 
-        if (_xorUnion->JudgeEqv(relation.first, relation.second)) continue;
+            if (_xorUnion->JudgeEqv(relation.first, relation.second)) continue;
 
-        if (!_xorUnion->Union(relation.first, relation.second, _eqvReasons[start]))
-        {
-            _xorUnion->GetConflictPath(relation.first, relation.second, _eqvReasons[start]);
-
-            return _xorUnion->_bigEqvReason;
+            if (!_xorUnion->Union(relation.first, relation.second,
+                                  _eqvReasons[start])) {
+                _xorUnion->GetConflictPath(relation.first, relation.second,
+                                           _eqvReasons[start]);
+                return _xorUnion->_bigEqvReason;
+            }
         }
     }
 

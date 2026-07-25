@@ -247,6 +247,9 @@ inline void Internal::search_assign (int lit, Clause *reason) {
   if (!searching_lucky_phases)
     phases.saved[idx] = tmp; // phase saving during search
   trail.push_back (lit);
+  // O(1) counter for GF2 trigger decisions.
+  if ((size_t) idx < xor_occs.size () && xor_occs[idx] > 0)
+    xor_assigned_count++;
   // SEGA: increment counters + track XOR parity for long XOR clauses
   {
     int v = abs(lit);
@@ -391,11 +394,14 @@ bool Internal::propagate () {
 
     if (opts.unionset)
     {
+      // 'lit' is the propagated-false literal (-assigned).
+      // Eqv implication table is keyed by the literal assigned TRUE.
+      const int assigned_lit = -lit;
       unsigned eqvStart = _eqvRelationSize;
-      const Eqvmap &eqvMap = _eqvMaps[vlit(lit)];
+      const Eqvmap &eqvMap = _eqvMaps[vlit(assigned_lit)];
       for (auto &pr : eqvMap)
       {
-        if (pr.first < pr.second) AddEqvRelation(pr.first, pr.second, lit);
+        if (pr.first < pr.second) AddEqvRelation(pr.first, pr.second, assigned_lit);
       }
 
       _xorConflict = EqvPropagation(eqvStart);

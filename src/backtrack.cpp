@@ -9,9 +9,13 @@ namespace CaDiCaL {
 
 inline void Internal::unassign (int lit) {
   assert (val (lit) > 0);
+  const int idx = vidx (lit);
+  if ((size_t) idx < xor_occs.size () && xor_occs[idx] > 0) {
+    assert (xor_assigned_count > 0);
+    xor_assigned_count--;
+  }
   set_val (lit, 0);
 
-  int idx = vidx (lit);
   // Clear reason on unassign: prevents stale reason checks in
   // XOR/mixed circular reasoning guards after backtrack.
   // Without this, a literal assigned by an XOR clause at a low level
@@ -216,7 +220,17 @@ void Internal::backtrack_without_updating_phases (int new_level) {
 
   if (opts.unionset)
   {
-    _eqvRelationSize = _lv2EqvRelation[level];
+    const int old_size = _eqvRelationSize;
+    const int new_size = _lv2EqvRelation[level];
+    if (new_size < old_size) {
+      for (int i = old_size - 1; i >= new_size; --i) {
+        if ((size_t) i < _eqv_relation_keys.size ())
+          _eqv_relation_hash.erase (_eqv_relation_keys[i]);
+      }
+      if ((size_t) new_size < _eqv_relation_keys.size ())
+        _eqv_relation_keys.resize (new_size);
+    }
+    _eqvRelationSize = new_size;
     _xorUnion->BackJump(new_level);
   }
 

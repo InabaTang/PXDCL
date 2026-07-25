@@ -25,6 +25,9 @@ public:
     unsigned  *_treeRank;   // subtree rank (tree depth) [lit]
     bool      *_rankPlus;   // true - add father rank by add [lit]
     unsigned  *_litDepth;   // litDepth in union set tree (to queryRoot) [lit]
+    unsigned  *_reasonStamp;
+    int       *_reasonPos;
+    unsigned   _reasonStampTick;
 
     int   *_trail; // union trail, for backTrack [var]
     unsigned   _trailSize;
