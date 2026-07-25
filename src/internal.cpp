@@ -1159,28 +1159,31 @@ void Internal::apply_binary_xor_substitution () {
     }
     if (!changed) continue;
 
-    if (c->mixed_flag) {
-      // Mixed clauses: just apply substitution.  Do NOT check for
-      // tautologies within blocks — a⊕¬a⊕X is NOT a tautology.
-      // Block offsets remain valid (same positions, new literals).
+    if (c->mixed_flag || c->xor_flag) {
+      // Mixed/XOR clauses use parity semantics, not CNF-OR semantics.
+      // For parity clauses:
+      //  - x and -x in the same clause are NOT a CNF tautology in general.
+      //  - duplicate literals should cancel mod 2, not CNF-deduplicate.
+      // So we only substitute literals here and leave normalization to the
+      // dedicated XOR/mixed machinery.
       continue;
-    } else {
-      bool is_tautology = false;
-      for (int i = 0; i < c->size; i++)
-        for (int j = i + 1; j < c->size; j++)
-          if (c->literals[i] == -c->literals[j])
-            is_tautology = true;
-      if (is_tautology) { mark_garbage (c); tautologies++; continue; }
-      int w = 0;
-      for (int i = 0; i < c->size; i++) {
-        int lit = c->literals[i];
-        bool dup = false;
-        for (int j = 0; j < w; j++)
-          if (c->literals[j] == lit) { dup = true; break; }
-        if (!dup) c->literals[w++] = lit;
-      }
-      if (w < c->size) { c->size = w; if (c->pos >= w) c->pos = 2; }
     }
+
+    bool is_tautology = false;
+    for (int i = 0; i < c->size; i++)
+      for (int j = i + 1; j < c->size; j++)
+        if (c->literals[i] == -c->literals[j])
+          is_tautology = true;
+    if (is_tautology) { mark_garbage (c); tautologies++; continue; }
+    int w = 0;
+    for (int i = 0; i < c->size; i++) {
+      int lit = c->literals[i];
+      bool dup = false;
+      for (int j = 0; j < w; j++)
+        if (c->literals[j] == lit) { dup = true; break; }
+      if (!dup) c->literals[w++] = lit;
+    }
+    if (w < c->size) { c->size = w; if (c->pos >= w) c->pos = 2; }
   }
 
   // Step 4: Rebuild watches.

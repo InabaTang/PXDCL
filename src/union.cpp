@@ -120,7 +120,10 @@ bool UnionSet::Union(int lit1, int lit2, int reason) {
     }
 
     _bigEqvReason.clear();
-    _bigEqvReason.push_back(reason);
+    // reason==0 means a permanent/root equivalence without a trail literal.
+    // Keep it out of reason vectors: literal '0' is not a valid SAT literal
+    // and can corrupt learned conflict clauses.
+    if (reason) _bigEqvReason.push_back(reason);
     GetReasonPath(lit_rt1, lit1);
     GetReasonPath(lit_rt2, lit2);
     StoreReasonPath(Get_Var(inter->slit(rt2)));
@@ -157,8 +160,8 @@ void UnionSet::Eraselit(int id , vector<int> &big)
 
 void UnionSet::AddVarReason(int lvar) 
 {
-    const vector<int> &reason = _varReasons[lvar];
-    if (reason.empty ()) return;
+  const vector<int> &reason = _varReasons[lvar];
+  if (reason.empty ()) return;
 
     // Build membership of current reason set in O(|_bigEqvReason|).
     if (++_reasonStampTick == 0) {
@@ -173,7 +176,7 @@ void UnionSet::AddVarReason(int lvar)
     }
 
     for (int lit : reason) {
-        assert (lit);
+        if (!lit) continue;
         const int idx = inter->vlit(lit);
         if (_reasonStamp[idx] == _reasonStampTick) {
             // Symmetric-difference cancellation in O(1).
@@ -199,7 +202,8 @@ void UnionSet::AddVarReason(int lvar)
 int UnionSet::Find(int lit) {
     int v_lit = inter->vlit(lit);
 
-    if (_litStamp[v_lit] != _timeStamp)
+    // queryRoot/litDepth caches are valid only for current backtrack epoch.
+    if (_litStamp[v_lit] != _backStamp)
     {
         _queryRoot[v_lit] = v_lit;
         _litDepth[v_lit] = 0;
@@ -281,8 +285,7 @@ void UnionSet::GetConflictPath(int lit1, int lit2, int reason) {
     //assert(inter->var(reason).level <= _levelSize);
     assert (inter->slit(Find(lit1)) == -inter->slit(Find(lit2)));
     _bigEqvReason.clear();
-    assert(reason);
-    _bigEqvReason.push_back(reason);
+    if (reason) _bigEqvReason.push_back(reason);
     GetReasonPath(lit1, -lit2);
 }
 

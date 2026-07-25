@@ -407,7 +407,15 @@ bool Internal::propagate () {
       _xorConflict = EqvPropagation(eqvStart);
       if (_xorConflict.size() != 0)
       {
-        clause = _xorConflict;
+        // EqvPropagation returns a set of currently TRUE reason literals
+        // that together imply contradiction.  The learned conflict clause
+        // must block this conjunction, thus we negate each reason literal.
+        clause.clear();
+        clause.reserve(_xorConflict.size());
+        for (const int lit : _xorConflict) {
+          if (!lit) continue;
+          clause.push_back(-lit);
+        }
         int jump = 0;
         xor_conflict_clause = new_driving_clause(clause.size(), jump);
         conflict = xor_conflict_clause;
